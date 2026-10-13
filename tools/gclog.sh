@@ -6,6 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 . tools/common.sh
 mode="${1:?usage: tools/gclog.sh on|off}"
+case "$PKG" in *claudecraft*) echo "our build writes files/gc.log itself (jvm.gcLog in claudecraft.properties); not touching custom_env.txt" >&2; exit 1 ;; esac
 tmp="$(mktemp)"
 adb pull "$FILES/custom_env.txt" "$tmp" >/dev/null 2>&1 || : > "$tmp"
 grep -v -E '^JAVA_TOOL_OPTIONS=-Xlog:gc' "$tmp" | grep '=' > "$tmp.new" || true

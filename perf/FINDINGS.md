@@ -43,8 +43,10 @@ plausible, but not re-checked line by line. **est** = estimate, unmeasured.
    - **There is no ModernFix for 1.21.5** (1.21.4 and older include it), although its config is still shipped.
    - The JRE is **JDK 22** (`android-openjdk-build-multiarch` tag `jre22-6.0.0`).
 4. **JVM flags** ✔ (`Pojlib JREUtils.java:203-240`):
-   - Heap: custom RAM gives `-Xms=-Xmx=memoryValue` (API default 1800 MB). Auto mode gives
-     `-Xms1024M -Xmx=max(0.8 × (availMem − threshold at launch), 1536)`.
+   - Heap: custom RAM gives `-Xms=-Xmx=memoryValue` (API default 1800 MB). Auto mode in the **released APK**
+     gives `-Xms1024M` and `-Xmx4096M` if more than 4096 MB is free at launch, `-Xmx2048M` from 2048 to
+     4096 MB, `-Xmx1536M` below (✔ from the APK's smali). Pojlib's source has
+     `-Xmx=max(0.8 × (availMem − threshold), 1536)` since `874e85b` (2025-06-09), after the APK was built.
    - GC: `-XX:+UseZGC -XX:+ZGenerational -XX:-ZProactive -XX:+DisableExplicitGC`.
    - Other: `-XX:-ImplicitNullChecks`, `-XX:+UseCriticalJavaThreadPriority`, `-XX:+UseSignalChaining`.
 5. **Zero-rebuild levers exist.** ✔
@@ -298,7 +300,7 @@ lacks `XR_KHR_android_thread_settings` and `XR_EXT_performance_settings`.
 These live in separate repos (Pojlib, QCXR-XR-Wrapper). Changing them means building the launcher and the
 Unity APK, so for us they are recommendations backed by data (PLAN Phase 3), plus the zero-rebuild levers above.
 
-- **Q1. ZGC on a 1.4–1.8 GB heap is a questionable choice for an 8 GB shared-memory device.** ✔ flags; impact is inference.
+- **Q1. ZGC on a 1.5–4 GB heap is a questionable choice for an 8 GB shared-memory device.** ✔ flags; impact is inference.
   - (a) There are no compressed oops, so every reference costs 8 B instead of 4 B. Minecraft's reference-heavy
     heap is larger than under G1.
   - (b) With `-Xms = -Xmx` the whole heap is committed (and resident) from launch.
@@ -311,8 +313,11 @@ Unity APK, so for us they are recommendations backed by data (PLAN Phase 3), plu
   - **The "1.8 GB heap" in CLAUDE.md is probably not what runs.** ✔ The Unity launcher's custom-RAM setting is
     off by default, and its default value is 2048 (`ConfigHandler.cs:41-42`). Pojlib's `1800` only applies when
     custom RAM is on but no value was passed.
-  - With custom RAM off (the default), `-Xmx = max(0.8 × (free RAM at launch − threshold), 1536 MB)`, so plausibly
-    2.5–3 GB (est). ZGC grows the heap toward that maximum and only uncommits above `-Xms` after 5 minutes idle.
+  - With custom RAM off (the default), the released APK sets `-Xmx4096M` whenever more than 4 GB is free at
+    launch, which is likely on a fresh start of an 8 GB headset (✔ code; the free-RAM value is est). ZGC grows the
+    heap toward that maximum and only uncommits above `-Xms` after 5 minutes idle. A 4 GB ZGC heap (no compressed
+    oops) next to Unity, ART, LTW and the GPU buffers in one process is a plausible path to the 6.3 GB kill late in
+    a session. After a kill the free RAM at the next launch differs, so the next run may get a different heap.
   - The launcher log `files/latestlog.txt` line `QuestCraft: Setting JVM memory to N MB` (plus "(Custom)") says
     which applies.
 - **Q3. `-XX:-ImplicitNullChecks` adds explicit null checks to all JIT code.** ✔ That is a CPU cost of unknown
@@ -324,8 +329,8 @@ Unity APK, so for us they are recommendations backed by data (PLAN Phase 3), plu
   - Also check how much memory the Vulkan device and scene hold (meminfo `.so`/`Graphics` rows before and after launch).
 - **Q5.** The manifest pins a June 2025 Vivecraft build. The ModernFix config is shipped for a version that
   doesn't include ModernFix.
-- **Q6.** Shipped `options.txt`: `mipmapLevels:4` (+33% atlas memory) and `simulationDistance:4` (clamped to
-  the minimum). Sodium options are reasonable (auto builder threads, `use_advanced_staging_buffers`).
+- **Q6.** Shipped `options.txt`: `mipmapLevels:4` (+33% atlas memory), `renderDistance:5` and
+  `simulationDistance:5` in the 6.0.0 APK (Pojlib lowered both to 4 after the release). Sodium options are reasonable (auto builder threads, `use_advanced_staging_buffers`).
 
 ---
 

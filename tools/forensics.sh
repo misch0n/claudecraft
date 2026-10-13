@@ -16,6 +16,7 @@ done
 adb logcat -d -b crash > "$out/logcat-crash.txt" 2>&1 || true
 adb logcat -d > "$out/logcat.txt" 2>&1 || true
 adb shell dumpsys meminfo > "$out/meminfo-system.txt" 2>&1 || true
+adb shell dumpsys package "$PKG" | grep -E 'versionCode=|versionName=|lastUpdateTime=' > "$out/package.txt" 2>&1 || true
 
 # Launcher and game logs.
 for f in latestlog.txt latestlog.prev.txt gc.log gc.log.0 gc.log.1 gc.log.2 claudecraft.properties custom_env.txt; do
