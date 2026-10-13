@@ -76,6 +76,11 @@ public class MCOpenXR extends MCVR {
     public String systemName;
     // claudecraft: xrRefreshRate, registered in PerfHooks while this session exists
     private Runnable refreshRateApplier;
+    // claudecraft: cacheInputOrigins, bound sources per action; cleared when the bindings can change
+    private static final long ORIGIN_CACHE_REFRESH_NANOS = 5_000_000_000L;
+    private final Map<VRInputAction, List<Long>> originCache = new IdentityHashMap<>();
+    private long originCacheTime = System.nanoTime();
+    private boolean originQueryFailed;
 
 
     public MCOpenXR(Minecraft mc, ClientDataHolderVR dh) {
@@ -98,6 +103,7 @@ public class MCOpenXR extends MCVR {
         {
             org.vivecraft.client_vr.perf.PerfHooks.refreshRateApplier = null;
         }
+        this.originCache.clear(); // claudecraft: cacheInputOrigins
         int error;
         // Not sure if we need the action sets one here, as we are shutting down
         for (Long inputActionSet : this.actionSetHandles.values()) {
@@ -247,6 +253,13 @@ public class MCOpenXR extends MCVR {
                         .activeActionSets(this.activeActionSetsBuffer);
                     error = XR10.xrSyncActions(this.session, syncInfo);
                     logError(error, "xrSyncActions", "");
+                }
+
+                // claudecraft: cacheInputOrigins, re-query the bound sources every 5 s as a safety net
+                if (this.dh.vrSettings.cacheInputOrigins &&
+                    System.nanoTime() - this.originCacheTime > ORIGIN_CACHE_REFRESH_NANOS)
+                {
+                    this.clearOriginCache();
                 }
 
                 this.inputActions.values().forEach(this::readNewData);
@@ -509,6 +522,9 @@ public class MCOpenXR extends MCVR {
                     this.sessionChanged(XrEventDataSessionStateChanged.create(event.address()));
                 }
                 case XR10.XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED -> {
+                    // claudecraft: cacheInputOrigins, controllers or hands changed, so the bound sources did too
+                    VRSettings.LOGGER.info("[VCPERF] OpenXR interaction profile changed");
+                    this.clearOriginCache();
                 }
                 case XR10.XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING -> {
                 }
@@ -528,6 +544,10 @@ public class MCOpenXR extends MCVR {
 
     private void sessionChanged(XrEventDataSessionStateChanged xrEventDataSessionStateChanged) {
         int state = xrEventDataSessionStateChanged.state();
+        // claudecraft: cacheInputOrigins, bound sources can differ once the session is (re)started or focused
+        if (state == XR10.XR_SESSION_STATE_READY || state == XR10.XR_SESSION_STATE_FOCUSED) {
+            this.clearOriginCache();
+        }
 
         switch (state) {
             case XR10.XR_SESSION_STATE_READY: {
@@ -1020,6 +1040,31 @@ public class MCOpenXR extends MCVR {
 
     @Override
     public List<Long> getOrigins(VRInputAction action) {
+        // claudecraft: cacheInputOrigins, saves two xrEnumerateBoundSourcesForAction calls per action and hand
+        // per frame (and more from VRInputAction.isEnabled()); failed queries are not cached
+        if (this.dh.vrSettings.cacheInputOrigins) {
+            List<Long> origins = this.originCache.get(action);
+            if (origins == null) {
+                origins = this.queryOrigins(action);
+                if (!this.originQueryFailed) {
+                    this.originCache.put(action, origins);
+                }
+            }
+            return origins;
+        }
+        return this.queryOrigins(action);
+    }
+
+    /**
+     * claudecraft: cacheInputOrigins, drops all cached bound sources
+     */
+    private void clearOriginCache() {
+        this.originCache.clear();
+        this.originCacheTime = System.nanoTime();
+    }
+
+    // claudecraft: the original getOrigins(), plus noting whether a runtime call failed
+    private List<Long> queryOrigins(VRInputAction action) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             XrBoundSourcesForActionEnumerateInfo info = XrBoundSourcesForActionEnumerateInfo.calloc(stack);
             info.type(XR10.XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO);
@@ -1029,6 +1074,7 @@ public class MCOpenXR extends MCVR {
             IntBuffer buf = stack.callocInt(1);
             int error = XR10.xrEnumerateBoundSourcesForAction(this.session, info, buf, null);
             logError(error, "xrEnumerateBoundSourcesForAction", action.name);
+            this.originQueryFailed = error < 0;
 
             int size = buf.get();
             if (size <= 0) {
@@ -1039,6 +1085,7 @@ public class MCOpenXR extends MCVR {
             LongBuffer longbuf = stack.callocLong(size);
             error = XR10.xrEnumerateBoundSourcesForAction(this.session, info, buf, longbuf);
             logError(error, "xrEnumerateBoundSourcesForAction", action.name);
+            this.originQueryFailed |= error < 0;
             long[] array;
             if (longbuf.hasArray()) { //TODO really?
                 array = longbuf.array();
