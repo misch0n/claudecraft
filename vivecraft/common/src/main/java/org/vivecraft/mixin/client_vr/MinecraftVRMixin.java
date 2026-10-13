@@ -280,9 +280,9 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
         if (VRState.VR_RUNNING) {
             try {
                 Profiler.get().push("setupRenderConfiguration");
-                GraphicsHelper.INSTANCE.checkError("pre render setup");
+                RenderHelper.checkGLErrorFrame("pre render setup");
                 ClientDataHolderVR.getInstance().vrRenderer.setupRenderConfiguration(true);
-                GraphicsHelper.INSTANCE.checkError("post render setup");
+                RenderHelper.checkGLErrorFrame("post render setup");
             } catch (Exception e) {
                 // something went wrong, disable VR
                 VRState.destroyVR(true);
@@ -331,7 +331,7 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
             Profiler.get().popPush("vrMirror");
             RenderPassManager.setMirrorRenderPass();
             ShaderHelper.drawMirror();
-            GraphicsHelper.INSTANCE.checkError("post-mirror");
+            RenderHelper.checkGLErrorFrame("post-mirror");
             original.call(this.mainRenderTarget);
             RenderPassManager.setGUIRenderPass();
         } else {

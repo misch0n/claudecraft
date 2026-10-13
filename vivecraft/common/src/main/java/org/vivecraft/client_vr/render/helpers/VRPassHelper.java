@@ -45,7 +45,7 @@ public class VRPassHelper {
         // THIS IS WHERE EVERYTHING IS RENDERED
         MC.gameRenderer.render(deltaTracker, renderLevel);
 
-        GraphicsHelper.INSTANCE.checkError("post game render " + eye);
+        RenderHelper.checkGLErrorFrame("post game render " + eye);
 
         if (ShadersHelper.isShaderActive()) {
             // some shaders don't write an alpha value to the final image
@@ -64,7 +64,7 @@ public class VRPassHelper {
                     DATA_HOLDER.vrRenderer.fsaaFirstPassResultFBO,
                     DATA_HOLDER.vrRenderer.fsaaLastPassResultFBO);
                 rendertarget = DATA_HOLDER.vrRenderer.fsaaLastPassResultFBO;
-                GraphicsHelper.INSTANCE.checkError("fsaa " + eye);
+                RenderHelper.checkGLErrorFrame("fsaa " + eye);
                 Profiler.get().pop();
             }
 
@@ -73,7 +73,7 @@ public class VRPassHelper {
                 DATA_HOLDER.vrRenderer.getEyeTarget(eye == RenderPass.LEFT ? 0 : 1),
                 deltaTracker.getGameTimeDeltaPartialTick(false));
 
-            GraphicsHelper.INSTANCE.checkError("post overlay" + eye);
+            RenderHelper.checkGLErrorFrame("post overlay" + eye);
             Profiler.get().pop();
         }
 
@@ -168,7 +168,7 @@ public class VRPassHelper {
             RenderHelper.drawScreen(guiGraphics, deltaTracker, RadialHandler.UI, true);
         }
         Profiler.get().pop();
-        GraphicsHelper.INSTANCE.checkError("post 2d ");
+        RenderHelper.checkGLErrorFrame("post 2d ");
 
         // done with guis
         Profiler.get().pop();
@@ -242,7 +242,7 @@ public class VRPassHelper {
                     VRSettings.LOGGER.error("Vivecraft: error ending frame: {}", exception.error.getString());
                 }
                 Profiler.get().pop();
-                GraphicsHelper.INSTANCE.checkError("post submit");
+                RenderHelper.checkGLErrorFrame("post submit");
             }
         }
         DATA_HOLDER.vrPlayer.postRender(deltaTracker.getGameTimeDeltaPartialTick(true));

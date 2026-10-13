@@ -550,4 +550,15 @@ public class RenderHelper {
         consumer.addVertex(matrix, (float) pos.x, (float) pos.y, (float) pos.z)
             .setColor(color.getX(), color.getY(), color.getZ(), alpha);
     }
+
+    /**
+     * claudecraft: per-frame error check. glGetError can stall the GL translation layer and driver, so
+     * per-frame checks only run when {@code glErrorChecks} is on. Setup paths keep calling
+     * {@link GraphicsHelper#checkError(String)} directly, since their result feeds error screens.
+     */
+    public static void checkGLErrorFrame(String errorSection) {
+        if (ClientDataHolderVR.getInstance().vrSettings.glErrorChecks) {
+            GraphicsHelper.INSTANCE.checkError(errorSection);
+        }
+    }
 }
