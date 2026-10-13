@@ -1,0 +1,135 @@
+name: build
+
+# Builds our Vivecraft jar and a patched QuestCraft APK that bundles it.
+# Artifacts: the jar, the APK in two variants (replace / side-by-side), and reports.
+# Pushing a tag `mihail.N` also publishes them as a GitHub release for sideloading.
+
+on:
+  push:
+    branches: [main, 'integration/**', 'perf/**']
+    tags: ['mihail.*']
+  workflow_dispatch:
+    inputs:
+      qc_release_tag:
+        description: QuestCraftPlusPlus/QuestCraft release tag to patch (empty = latest)
+        required: false
+      qc_apk_url:
+        description: Direct URL of the QuestCraft APK to patch (overrides the release lookup)
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QC_REPO: QuestCraftPlusPlus/QuestCraft
+  VIVECRAFT_RELEASE_REPO: QuestCraftPlusPlus/VivecraftMod
+  VIVECRAFT_RELEASE_TAG: 1.21.5-1.2.5-OpenXR
+
+jobs:
+  vivecraft:
+    runs-on: ubuntu-latest
+    outputs:
+      mod_version: ${{ steps.meta.outputs.mod_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build Fabric jar
+        working-directory: vivecraft
+        run: ./gradlew :fabric:build --no-daemon --stacktrace
+      - name: Locate jar
+        id: meta
+        run: |
+          v=$(grep '^mod_version=' vivecraft/gradle.properties | cut -d= -f2)
+          jar=$(ls vivecraft/fabric/build/libs/*-fabric.jar | grep -v -E -- '-(sources|dev|dev-shadow)\.jar$' | head -1)
+          echo "mod_version=$v" >> "$GITHUB_OUTPUT"
+          echo "jar=$jar" >> "$GITHUB_OUTPUT"
+          echo "### Vivecraft \`$v\`" >> "$GITHUB_STEP_SUMMARY"
+          ls -l vivecraft/fabric/build/libs/ | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Compare with the QuestCraft release jar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$VIVECRAFT_RELEASE_TAG" -R "$VIVECRAFT_RELEASE_REPO" -p '*fabric*.jar' -D release
+          python3 apk/compare_jars.py "${{ steps.meta.outputs.jar }}" release/*.jar | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vivecraft-jar
+          path: ${{ steps.meta.outputs.jar }}
+          if-no-files-found: error
+
+  apk:
+    needs: vivecraft
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/download-artifact@v4
+        with:
+          name: vivecraft-jar
+          path: jar
+      - name: Tools (apktool, dex2jar)
+        run: |
+          mkdir -p tools-bin && cd tools-bin
+          curl -fsSL -o apktool.jar https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
+          curl -fsSL -o dex2jar.zip https://github.com/pxb1988/dex2jar/releases/download/v2.4/dex-tools-v2.4.zip
+          unzip -q dex2jar.zip
+          d2j=$(find "$PWD" -name d2j-dex2jar.sh | head -1); chmod +x "$(dirname "$d2j")"/*.sh
+          echo "APKTOOL_JAR=$PWD/apktool.jar" >> "$GITHUB_ENV"
+          echo "DEX2JAR=$d2j" >> "$GITHUB_ENV"
+      - name: Fetch the QuestCraft APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK_URL: ${{ inputs.qc_apk_url }}
+          QC_TAG: ${{ inputs.qc_release_tag }}
+        run: |
+          mkdir -p qc
+          if [ -n "$APK_URL" ]; then
+            curl -fsSL -o qc/questcraft.apk "$APK_URL"
+            src="$APK_URL"
+          else
+            gh release list -R "$QC_REPO" -L 10
+            tag="${QC_TAG:-$(gh release view -R "$QC_REPO" --json tagName -q .tagName)}"
+            gh release view "$tag" -R "$QC_REPO" --json assets -q '.assets[].name'
+            gh release download "$tag" -R "$QC_REPO" -p '*.apk' -D qc
+            src="$QC_REPO release $tag"
+          fi
+          apk=$(ls qc/*.apk | head -1)
+          echo "QC_APK=$apk" >> "$GITHUB_ENV"
+          { echo "### QuestCraft APK"; echo "- source: $src"; echo "- file: \`$(basename "$apk")\`"; echo "- sha256: \`$(sha256sum "$apk" | cut -d' ' -f1)\`"; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Build APK (replace variant)
+        run: apk/build-apk.sh --apk "$QC_APK" --jar jar/*.jar --variant replace --out out --tag "${{ needs.vivecraft.outputs.mod_version }}"
+      - name: Build APK (side-by-side variant)
+        continue-on-error: true
+        run: apk/build-apk.sh --apk "$QC_APK" --jar jar/*.jar --variant side --out out --tag "${{ needs.vivecraft.outputs.mod_version }}"
+      - name: Report
+        if: always()
+        run: |
+          cat out/patch-report-*.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          ls -l out jar | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: questcraft-claudecraft-apk
+          path: |
+            out/*.apk
+            out/*.sha256
+            out/*.md
+          if-no-files-found: error
+      - name: Publish release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --prerelease --title "$GITHUB_REF_NAME" \
+            --notes "Personal sideload build. See perf/RESULTS.md and the test script in the repo." \
+            out/*.apk out/*.sha256 jar/*.jar
