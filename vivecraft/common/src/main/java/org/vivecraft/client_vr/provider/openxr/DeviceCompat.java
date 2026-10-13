@@ -132,7 +132,13 @@ public interface DeviceCompat {
                 VLoader.getDalvikActivity()
             );
 
-            KHRLoaderInit.xrInitializeLoaderKHR(XrLoaderInitInfoBaseHeaderKHR.create(initInfo.address()));
+            int loaderResult = KHRLoaderInit.xrInitializeLoaderKHR(
+                XrLoaderInitInfoBaseHeaderKHR.create(initInfo.address()));
+            // claudecraft: xrStartupRetry, the result was ignored; logged to time the Unity hand-off
+            if (org.vivecraft.client_vr.ClientDataHolderVR.getInstance().vrSettings.xrStartupRetry) {
+                VRSettings.LOGGER.info("[VCPERF] xr startup: loader initialized 2500 ms after the Unity hand-off, result {}",
+                    loaderResult);
+            }
         }
 
         @Override

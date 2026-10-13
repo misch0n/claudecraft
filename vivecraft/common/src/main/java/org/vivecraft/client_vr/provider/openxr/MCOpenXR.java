@@ -81,6 +81,13 @@ public class MCOpenXR extends MCVR {
     private final Map<VRInputAction, List<Long>> originCache = new IdentityHashMap<>();
     private long originCacheTime = System.nanoTime();
     private boolean originQueryFailed;
+    // claudecraft: xrStartupRetry
+    private static final long STARTUP_RETRY_BUDGET_NANOS = 15_000_000_000L;
+    private static final long STARTUP_RETRY_SPACING_MILLIS = 1000L;
+    private static final long SESSION_READY_TIMEOUT_NANOS = 30_000_000_000L;
+    private boolean startupRetry;
+    private boolean loaderInitialized;
+    private long startupDeadline;
 
 
     public MCOpenXR(Minecraft mc, ClientDataHolderVR dh) {
@@ -110,7 +117,10 @@ public class MCOpenXR extends MCVR {
             error = XR10.xrDestroyActionSet(new XrActionSet(inputActionSet, this.instance));
             logError(error, "xrDestroyActionSet", "");
         }
-        for (XrSwapchain xrSwapchain : this.swapchain) {
+        // claudecraft: xrStartupRetry, the swapchains don't exist when init failed before creating them
+        XrSwapchain[] swapchains =
+            this.swapchain == null && this.dh.vrSettings.xrStartupRetry ? new XrSwapchain[0] : this.swapchain;
+        for (XrSwapchain xrSwapchain : swapchains) {
             error = XR10.xrDestroySwapchain(xrSwapchain);
             logError(error, "xrDestroySwapchain", "");
         }
@@ -631,8 +641,17 @@ public class MCOpenXR extends MCVR {
             this.tried = true;
             this.mc = Minecraft.getInstance();
             try {
-                this.initializeOpenXRInstance();
-                this.initializeOpenXRSession();
+                // claudecraft: xrStartupRetry, bounded retries of instance and session creation, timed READY wait
+                this.startupRetry = this.dh.vrSettings.xrStartupRetry;
+                if (this.startupRetry) {
+                    this.startupDeadline = System.nanoTime() + STARTUP_RETRY_BUDGET_NANOS;
+                    this.startWithRetry("instance", this::initializeOpenXRInstance);
+                    this.startWithRetry("session", this::initializeOpenXRSession);
+                    this.waitForSessionReady();
+                } else {
+                    this.initializeOpenXRInstance();
+                    this.initializeOpenXRSession();
+                }
                 this.initializeOpenXRSpace();
                 this.initializeOpenXRSwapChain();
                 this.initInputAndApplication();
@@ -658,9 +677,71 @@ public class MCOpenXR extends MCVR {
         }
     }
 
+    /**
+     * claudecraft: xrStartupRetry, runs one startup step, retrying it every second until it works or the
+     * shared startup budget (15 s from the first instance attempt) is used up
+     */
+    private void startWithRetry(String step, Runnable attempt) {
+        long start = System.nanoTime();
+        for (int tries = 1; ; tries++) {
+            try {
+                attempt.run();
+                VRSettings.LOGGER.info("[VCPERF] xr startup: {} created on attempt {} after {} ms", step, tries,
+                    (System.nanoTime() - start) / 1_000_000L);
+                return;
+            } catch (RuntimeException e) {
+                if (System.nanoTime() + STARTUP_RETRY_SPACING_MILLIS * 1_000_000L > this.startupDeadline) {
+                    VRSettings.LOGGER.error("[VCPERF] xr startup: {} failed on attempt {} after {} ms, giving up: {}",
+                        step, tries, (System.nanoTime() - start) / 1_000_000L, e.getMessage());
+                    throw e;
+                }
+                VRSettings.LOGGER.warn("[VCPERF] xr startup: {} failed on attempt {} after {} ms, retrying in {} ms: {}",
+                    step, tries, (System.nanoTime() - start) / 1_000_000L, STARTUP_RETRY_SPACING_MILLIS,
+                    e.getMessage());
+                try {
+                    Thread.sleep(STARTUP_RETRY_SPACING_MILLIS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+    }
+
+    /**
+     * claudecraft: xrStartupRetry, the original READY wait with a short sleep and a 30 s timeout instead of an
+     * endless busy loop
+     */
+    private void waitForSessionReady() {
+        long start = System.nanoTime();
+        VRSettings.LOGGER.info("Vivecraft: waiting for OpenXR session to start");
+        while (!this.isActive) {
+            this.pollVREvents();
+            if (this.isActive) {
+                break;
+            }
+            if (System.nanoTime() - start > SESSION_READY_TIMEOUT_NANOS) {
+                throw new RuntimeException("OpenXR session did not become ready within " +
+                    SESSION_READY_TIMEOUT_NANOS / 1_000_000_000L + " s. Restart the game and try again.");
+            }
+            try {
+                Thread.sleep(5L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for the OpenXR session to start");
+            }
+        }
+        VRSettings.LOGGER.info("[VCPERF] xr startup: session ready after {} ms",
+            (System.nanoTime() - start) / 1_000_000L);
+    }
+
     private void initializeOpenXRInstance() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            this.device.initOpenXRLoader(stack);
+            // claudecraft: xrStartupRetry may run this method again, the loader (and the Unity hand-off) only once
+            if (!this.loaderInitialized) {
+                this.device.initOpenXRLoader(stack);
+                this.loaderInitialized = true;
+            }
 
             // Check extensions
             IntBuffer numExtensions = stack.callocInt(1);
@@ -799,9 +880,17 @@ public class MCOpenXR extends MCVR {
             PointerBuffer sessionPtr = stack.callocPointer(1);
             error = XR10.xrCreateSession(this.instance, info, sessionPtr);
             logError(error, "xrCreateSession", "");
+            // claudecraft: xrStartupRetry, a failed session is retried instead of waiting forever for its READY
+            if (this.startupRetry && error < 0) {
+                throw new RuntimeException("xrCreateSession failed: " + getResultName(error));
+            }
 
             this.session = new XrSession(sessionPtr.get(0), this.instance);
 
+            // claudecraft: xrStartupRetry waits for READY in waitForSessionReady(), with a timeout
+            if (this.startupRetry) {
+                return;
+            }
             boolean checked = false;
             while (!this.isActive) {
                 if (!checked)
