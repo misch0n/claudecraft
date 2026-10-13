@@ -28,6 +28,7 @@ import java.util.concurrent.ExecutionException;
 
 import pojlib.API;
 
+import pojlib.ClaudecraftUnityPause;
 import pojlib.UnityPlayerActivity;
 import pojlib.install.Installer;
 import pojlib.install.MinecraftMeta;
@@ -289,7 +290,14 @@ public class JREUtils {
         chdir(instance.gameDir);
         userArgs.add(0,"java"); //argv[0] is the program name according to C standard.
 
-        int exitCode = VMLauncher.launchJVM(userArgs.toArray(new String[0]));
+        // claudecraft (unity.pauseInGame, PLAN 1o): pause Unity once the game is in VR; give it back if the JVM returns
+        ClaudecraftUnityPause.startWatcher(activity);
+        int exitCode;
+        try {
+            exitCode = VMLauncher.launchJVM(userArgs.toArray(new String[0]));
+        } finally {
+            ClaudecraftUnityPause.onGameEnded(activity);
+        }
         Logger.getInstance().appendToLog("Java Exit code: " + exitCode);
         return exitCode;
     }
