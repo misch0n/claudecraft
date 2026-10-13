@@ -13,7 +13,7 @@ before it counts as a win (CLAUDE.md rule 6).
 | Unity launcher | `QuestCraftPlusPlus/QCXR-XR-Wrapper` `master` `5aeb178` (scripts + settings only) | UI process host |
 | Sodium | `CaffeineMC/sodium` 0.6.13 for 1.21.5 | to check what the Vivecraft mixins change |
 | Upstream Vivecraft | `Vivecraft/VivecraftMod` `openxr` (now MC 26.2) | cherry-pick source |
-| LTW | `artdeell/LTW` (see section 6) | GL to GL ES translation layer (shipped as a prebuilt `libltw.so`) |
+| LTW | `artdeell/LTW` `3122623` (2025-04-07): matches the shipped `libltw.so` build date | GL to GL ES translation layer (shipped as a prebuilt `libltw.so`) |
 
 Legend: **✔** = checked in source by the lead session. **◐** = reported by a sub-review and
 plausible, but not re-checked line by line. **est** = estimate, unmeasured.
@@ -104,6 +104,7 @@ plausible, but not re-checked line by line. **est** = estimate, unmeasured.
 | Z3 | GC log on (M2), with no other change | decides the launcher GC recommendation (Q1) | stall count and duration during join |
 | Z4 | One optional mod removed at a time (Simple Voice Chat first, if not needed) | thread and memory share | M3, M5 |
 | Z5 | Add ModernFix for 1.21.5 by hand, only if a compatible release exists | model/resource memory | M5; watch for incompatibility |
+| Z6 | `LIBGL_NOERROR=1` in `custom_env.txt` (LTW L4) | shows whether `glGetError` costs anything (V9) | CPU frame time; test only, it hides GPU OOM |
 
 ---
 
@@ -195,7 +196,7 @@ plausible, but not re-checked line by line. **est** = estimate, unmeasured.
 - **Where:** `RenderHelper.checkGLError` (`:565`) is unconditional. It is called from `VRPassHelper`
   (per eye) and `MinecraftVRMixin`.
 - **Cost:** through LTW and a possibly threaded driver, each call can force a sync. Unknown; could be
-  negligible or several ms.
+  negligible or several ms. Z6 (`LIBGL_NOERROR=1`) measures it before any code is written.
 - **Fix:** toggle `glErrorChecks` (default off on Android) and build the strings lazily. Risk: none.
 
 **V10. Head only.** ✔ unless marked. Matters only if we base on head.
@@ -281,16 +282,65 @@ Unity APK, so for us they are recommendations backed by data (PLAN Phase 3), plu
 
 ## 6. LTW (GL to GL ES layer)
 
-_Pending: a separate review of `artdeell/LTW` was still running when this was written; results will be added here._
+**Shipped build:** ✔ Pojlib's current `libltw.so` (commit `325a4b2`, "rollback LTW") embeds
+`Build date: Apr 7 2025 18:07:00`. That matches public LTW commit `3122623` (2025-04-07); its log strings
+match too. File:line references below are to that commit. Current LTW master has changed several of these
+points, but none of those changes ship.
+
+How it dispatches: GL names LTW doesn't override resolve straight to the Adreno driver, at zero extra cost.
+
+- **L1. Sodium's multi-draw becomes one driver draw per entry.** ✔
+  - **Where:** `basevertex.c:91-97`: on ES 3.2, `glMultiDrawElementsBaseVertex` is a C loop of
+    `glDrawElementsBaseVertex`.
+  - **Effect:** Sodium issues one entry per visible face direction per section, so Adreno pays its per-draw
+    CPU cost thousands of times per eye, twice per frame.
+  - **Consequence:** draw count per eye is the dominant per-eye cost.
+    - Shared culling (V11) removes the duplicated *visibility* work but not the second eye's draws; only
+      multiview (R1) removes those.
+    - Keep Sodium block-face culling on and render distance modest.
+- **L2. Shader translation is synchronous and uncached.** ◐
+  - **Where:** `shader_wrapper.c:155-181`. Every `glShaderSource` runs a full Mesa GLSL compile to ES 3.20
+    on the render thread, rebuilding Mesa's builtin tables each time. The driver then compiles the result again.
+  - **Effect:** CPU time and short-lived native allocations on every pipeline compile. A plausible
+    contributor to join and resource-load hitches.
+  - **Bugs:** a translation failure passes NULL to the driver (likely crash; fixed only in 2026-05), and
+    multi-string sources overwrite each other.
+  - **Vivecraft side:** compile once at load, never per frame or on resize. Use single-string sources.
+- **L3. `glTexParameteri` silently turns `GL_LINEAR` into `GL_NEAREST`** for min and mag filters. ✔ (`main.c:205-210`)
+  - **Scope:** removed in LTW in July 2025, but present in the shipped build. In 1.21.5 every linear filter
+    set through `GlStateManager._texParameter` becomes nearest.
+  - **Effect:** a *quality* problem, not performance. The GUI/HUD texture and other resampled quads in VR
+    alias and shimmer.
+  - **Fix (cheap, toggle):** set the filters Vivecraft needs with `glTexParameterf` / `glSamplerParameteri`,
+    which LTW doesn't remap.
+- **L4. `glGetError` goes to the driver unless `LIBGL_NOERROR` is set.** ✔ (`main.c:438-452`)
+  - Pojlib doesn't set it. `LIBGL_NOERROR=1` in `custom_env.txt` makes every `glGetError` return 0, which gives
+    an A/B test for V9 with no rebuild (Z6).
+  - Caveat: Minecraft uses `glGetError` to detect GPU out-of-memory on texture allocation. Test only.
+- **L5. Calls that stall or misbehave.** ◐ None are used per frame by Vivecraft today, as far as was checked.
+  Keep it that way.
+  - `glGetTexImage` is a synchronous `glReadPixels` through a temporary framebuffer.
+  - `glReadPixels(GL_DEPTH_COMPONENT)` returns nothing, and reallocates and blits on each call.
+  - `glMapBuffer` maps the whole buffer with no unsynchronised or invalidate flags.
+  - Each `glDrawBuffers` re-attaches every colour target.
+  - Desktop-only names (`glDrawBuffer`, `glClearTexImage`, `glMultiDrawElementsIndirect`, …) can be silent no-ops.
+- **L6. Clean pass-through:** ◐ `glBlitFramebuffer`, `glInvalidateFramebuffer`, `glMapBufferRange`, fences,
+  `glBufferStorage` (native `EXT_buffer_storage`, so Sodium's persistent staging buffer is native),
+  instanced and base-vertex draws, and `glFramebufferTextureMultiviewOVR`.
+- **Native memory overhead:** small. No shadow copies of buffers or textures; mainly the transient
+  allocations during shader translation.
 
 ---
 
 ## 7. Research items (high ceiling, high effort)
 
 - **R1. Multiview (single-pass stereo).**
-  - **History:** Pojlib commit `8293dcd` "OVRMultiview support" (2025-03-08) updated LTW and added an
-    `enableOVRMultiview` Vivecraft setting. The setting was removed the next day. No public Vivecraft branch
-    contains multiview code.
+  - **History:** Pojlib commit `8293dcd` "OVRMultiview support" (2025-03-08) shipped a *private* LTW build
+    ("All rights reserved", with multiview shader strings) and added an `enableOVRMultiview` Vivecraft setting.
+    The setting was removed the next day. The public April build that ships now drops multiview shader
+    handling: its parser rejects `GL_OVR_multiview2` and `gl_ViewID_OVR` (◐).
+  - **Status today:** no public Vivecraft branch contains multiview code. An app would have to bypass LTW for
+    multiview shaders, using the driver's own `glCreateShader` with native ES 3.20 source.
   - **Why it matters:** it is the only change that removes the per-eye draw submission, which is the dominant
     per-eye CPU cost.
   - **Cost:** every vanilla and Sodium shader needs `gl_ViewID_OVR`, render targets become texture arrays,
@@ -325,5 +375,6 @@ _Pending: a separate review of `artdeell/LTW` was still running when this was wr
    7. new: session-state handling (V12)
    8. 1c lazy buffers, extended with outline sharing (V2, V3)
    9. optional: XR thread/perf hints (V13)
+   10. quality, not perf: linear filtering for the GUI and other VR quads despite LTW's remap (L3)
 4. **Phase 2:** replace the design with V11 (union frustum plus skipping Sodium's update on the RIGHT eye).
 5. **Phase 3:** add R1 (multiview) as a question for the QuestCraft developers, and Q1–Q4 for the launcher write-up.
