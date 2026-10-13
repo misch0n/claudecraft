@@ -27,7 +27,8 @@ access token redacted. Running it before relaunching matters: QuestCraft wipes i
 ## 2. Baseline: official QuestCraft, unchanged (20 min)
 
 1. Turn on the GC log for the official app (removable afterwards): `tools/gclog.sh on`
-2. Start QuestCraft and Minecraft as usual. On the title screen: `tools/mem.sh title`.
+2. Start QuestCraft. On its menu, **before pressing Play**: `tools/mem.sh launcher` (Unity alone, to size it).
+   Then start Minecraft as usual. On the title screen: `tools/mem.sh title`.
 3. Join your usual world. About 10 s in: `tools/mem.sh load`. At 60 s: `tools/mem.sh settled`.
 4. Walk around for 2 minutes: `tools/mem.sh walk`.
 5. Keep playing normally for 15 minutes (whatever you usually do): `tools/mem.sh long`.
@@ -47,7 +48,8 @@ access token redacted. Running it before relaunching matters: QuestCraft wipes i
 
 Same routine as step 2, with `PKG=com.qcxr.qcxr.claudecraft` in front of each command:
 
-1. Start Minecraft from QuestCraft CC. Title screen: `PKG=com.qcxr.qcxr.claudecraft tools/mem.sh title`.
+1. Open QuestCraft CC. On its menu, before pressing Play: `PKG=com.qcxr.qcxr.claudecraft tools/mem.sh launcher`.
+   Start Minecraft. Title screen: `PKG=com.qcxr.qcxr.claudecraft tools/mem.sh title`.
 2. Join the world: `load` at ~10 s, `settled` at 60 s, `walk` after 2 min of walking.
 3. Play 15–20 minutes: `long`.
 4. Our launcher writes `files/claudecraft.properties` (every launcher switch, with comments) and logs what it
