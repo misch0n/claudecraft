@@ -23,8 +23,10 @@ is standing context and rules.
   Minecraft and the integrated server, LTW (desktop GL → GL ES), and Vivecraft's OpenXR session. GPU
   memory is ordinary RAM on this device.
 - **The Java heap is not a fixed 1.8 GB.**
-  - With the launcher's custom RAM setting off (the default),
-    `-Xmx = max(0.8 × (free RAM at launch − threshold), 1536 MB)`, plausibly 2.5–3 GB, with `-Xms1024M`.
+  - With the launcher's custom RAM setting off (the default), the 6.0.0 APK sets `-Xmx4096M` when more than
+    4 GB is free at launch, `-Xmx2048M` from 2 to 4 GB and `-Xmx1536M` below, always with `-Xms1024M`.
+    (Pojlib's later formula `max(0.8 × (free − threshold), 1536)` is not in the release; see
+    `pojlib/IMPORTED.md`.) `latestlog.txt` says which: `QuestCraft: Setting JVM memory to N MB`.
   - With it on, `-Xms = -Xmx =` the entered value (the Unity field defaults to 2048).
   - The GC is generational ZGC: no compressed oops (8-byte references), and the committed heap stays
     resident.
@@ -42,6 +44,8 @@ is standing context and rules.
     Fabric API 0.128.2, Cloth Config
   - **No ModernFix for 1.21.5.**
 - **Java runtime:** OpenJDK **22** (`jre22-6.0.0`), started inside the app process via `JLI_Launch`.
+- **QuestCraft APK:** `QCXR-6.0.0.apk` from the GitHub release, versionCode 40, sha256 `4d474dff…b783c`.
+  `tools/apkinfo.sh` checks that the headset runs this exact APK (SideQuest's copy may differ).
 - **LTW:** a build of `artdeell/LTW` commit `3122623` (2025-04-07).
 
 ## Hardware and runtime facts
@@ -60,7 +64,7 @@ is standing context and rules.
 | Path | What |
 |---|---|
 | `vivecraft/` | QuestCraftPlusPlus/VivecraftMod @ `6d9b96af`, which the release `1.21.5-1.2.5-OpenXR` was most likely built from (CI compares it with the release jar). Imported as a git subtree (`--squash`); our changes are normal commits. |
-| `pojlib/` | QuestCraftPlusPlus/Pojlib @ `c6566d5` (`QuestCraft-6.0.0`), vendored without binaries (see `pojlib/IMPORTED.md`). Not built as a whole. |
+| `pojlib/` | QuestCraftPlusPlus/Pojlib @ `c6566d5` (`QuestCraft-6.0.0`), vendored without binaries. The 6.0.0 APK was built from an older commit (≈`092c27e`, 2025-05-30); the one later change to a class we replace is reverted (see `pojlib/IMPORTED.md`). Not built as a whole. |
 | `apk/` | APK pipeline: `build-apk.sh`, `patched-sources.txt` (the launcher classes we change), `rename_package.py`, `compare_jars.py`, and the debug signing key |
 | `.github/workflows/build.yml` | CI. Builds the jar and the APKs; a `mihail.N` tag publishes a GitHub release |
 | `tools/` | Device scripts (adb), run on the user's Mac |
@@ -151,6 +155,8 @@ The Unity C# (QCXR-XR-Wrapper) is compiled to native code inside the APK, so we 
 - `tools/deploy.sh` — quick iteration without a new APK. Back up the on-device jar once
   (`Vivecraft.jar.orig`), push a new jar **under the same filename**, print the pushed `mod_version`.
 - `tools/restore.sh` — put the original jar back.
+- `tools/apkinfo.sh` — the installed APK's version and sha256 against the GitHub 6.0.0 release, and the heap
+  size the launcher picked last.
 - `tools/logs.sh` — pull `latest.log`, `latestlog.txt`, the GC log and crash reports into
   `perf/runs/<timestamp>/` (redacted).
 - `tools/mem.sh <label>` — `adb shell dumpsys meminfo <pkg>` plus per-thread CPU (`top -H`) into the

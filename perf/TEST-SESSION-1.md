@@ -21,6 +21,8 @@ access token redacted. Running it before relaunching matters: QuestCraft wipes i
 
 1. `tools/forensics.sh`. Android keeps records of the last crashes, so this tells us what killed the
    app in the sessions you already played.
+2. `tools/apkinfo.sh`. Checks that your SideQuest install is the same APK we patch, and shows the heap
+   size the launcher picked last time (`4096`, `2048` or `1536` MB, depending on free RAM at launch).
 
 ## 2. Baseline: official QuestCraft, unchanged (20 min)
 
