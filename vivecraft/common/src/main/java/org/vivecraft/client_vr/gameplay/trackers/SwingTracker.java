@@ -36,6 +36,7 @@ import org.vivecraft.data.BlockTags;
 import org.vivecraft.data.ItemTags;
 import org.vivecraft.mod_compat_vr.epicfight.EpicFightHelper;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -86,6 +87,12 @@ public class SwingTracker extends Tracker {
         } else {
             return !this.dh.jumpTracker.isjumping();
         }
+    }
+
+    @Override
+    public void clearLevelReferences() {
+        // claudecraft: clearTrackerRefs, the entities hit by the last swing
+        Arrays.fill(this.lastHitEntities, Collections.emptyList());
     }
 
     /**
