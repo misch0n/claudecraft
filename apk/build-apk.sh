@@ -103,7 +103,7 @@ cp "$JAR" "$WORK/app/assets/claudecraft/Vivecraft.jar"
 {
   echo "build_tag=$TAG"
   echo "vivecraft_jar=$(basename "$JAR")"
-  echo "mc_version=$(unzip -p "$JAR" fabric.mod.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("depends",{}).get("minecraft",""))' 2>/dev/null || true)"
+  echo "mc_version=$(unzip -p "$JAR" fabric.mod.json | python3 -c 'import json,sys; m=json.load(sys.stdin).get("depends",{}).get("minecraft",""); print(",".join(m) if isinstance(m,list) else m)' 2>/dev/null || true)"
 } > "$WORK/app/assets/claudecraft/build.properties"
 
 # 4. Side-by-side variant: rename the package, authorities, app-defined permissions and the label.

@@ -203,6 +203,8 @@ public class JREUtils {
     }
 
     public static int launchJavaVM(final Activity activity, final List<String> JVMArgs, MinecraftInstances.Instance instance) throws Throwable {
+        // claudecraft (vivecraft.installBundled, PLAN 1p): API.prelaunch has run the mod manifest update by now
+        BundledVivecraft.install(activity, instance);
         JREUtils.relocateLibPath(activity);
         setJavaEnvironment(activity, instance);
 

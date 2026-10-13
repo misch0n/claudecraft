@@ -6,3 +6,4 @@ pojlib/src/main/java/pojlib/util/ClaudecraftConfig.java
 pojlib/src/main/java/pojlib/util/Logger.java
 pojlib/src/main/java/pojlib/UnityPlayerActivity.java
 pojlib/src/main/java/pojlib/ClaudecraftUnityPause.java
+pojlib/src/main/java/pojlib/util/BundledVivecraft.java
