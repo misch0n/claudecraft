@@ -41,6 +41,9 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-cleanup: never
+          add-job-summary: never
       - name: Build Fabric jar
         working-directory: vivecraft
         run: bash ./gradlew :fabric:build --no-daemon --stacktrace
@@ -79,6 +82,9 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-cleanup: never
+          add-job-summary: never
       - name: Packages
         run: sudo apt-get update -q && sudo apt-get install -y -q xvfb libgl1-mesa-dri mesa-utils
       - name: Generate a flat test world with the vanilla server
@@ -132,7 +138,11 @@ jobs:
             grep -q '\[VCPERF\] config' "$log" || { echo "::error::no [VCPERF] config line (VR did not start?)"; fail=1; }
             grep -q 'label=join+60s' "$log" || { echo "::error::did not stay in the world for 60 s"; fail=1; }
           fi
-          grep -n -E 'ERROR\]|Exception' "$log" | grep -v -i -E 'sound|openal|realms|telemetry|narrator' | head -40 || true
+          echo "=== SUMMARY (smoke) ==="
+          echo "VR init: $(grep -c -E 'Vivecraft: (Garbage collector|OpenXR|NullVR)|\[VCPERF\] config' "$log") | world joined: $(grep -c -E 'joined the game|Loaded [0-9]+ advancements|label=join ' "$log") | VCPERF lines: $(grep -c '\[VCPERF\]' "$log") | errors: $(grep -c -E 'ERROR\]' "$log")"
+          grep -E '\[VCPERF\] (config|mem label=(vr_init|join|join\+60s|leave))' "$log" | cut -c1-330 | head -8 || true
+          grep -n -E 'ERROR\]|Exception' "$log" | grep -v -i -E 'sound|openal|realms|telemetry|narrator' | cut -c1-250 | head -15 || true
+          echo "=== END SUMMARY (fail=$fail) ==="
           exit $fail
       - uses: actions/upload-artifact@v4
         if: always()
