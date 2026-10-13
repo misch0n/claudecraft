@@ -74,6 +74,8 @@ public class MCOpenXR extends MCVR {
     public boolean shouldRender = true;
     public long[] haptics = new long[2];
     public String systemName;
+    // claudecraft: xrRefreshRate, registered in PerfHooks while this session exists
+    private Runnable refreshRateApplier;
 
 
     public MCOpenXR(Minecraft mc, ClientDataHolderVR dh) {
@@ -90,6 +92,12 @@ public class MCOpenXR extends MCVR {
 
     @Override
     public void destroy() {
+        // claudecraft: xrRefreshRate, no live changes once the session is gone
+        if (this.refreshRateApplier != null &&
+            org.vivecraft.client_vr.perf.PerfHooks.refreshRateApplier == this.refreshRateApplier)
+        {
+            org.vivecraft.client_vr.perf.PerfHooks.refreshRateApplier = null;
+        }
         int error;
         // Not sure if we need the action sets one here, as we are shutting down
         for (Long inputActionSet : this.actionSetHandles.values()) {
@@ -518,6 +526,14 @@ public class MCOpenXR extends MCVR {
                 }
                 case XR10.XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING -> {
                 }
+                case FBDisplayRefreshRate.XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB -> {
+                    // claudecraft: xrRefreshRate, the runtime switched rates (only sent with the FB extension)
+                    XrEventDataDisplayRefreshRateChangedFB changed = XrEventDataDisplayRefreshRateChangedFB.create(
+                        event.address());
+                    org.vivecraft.client_vr.perf.PerfProbe.put("xrRefreshRateActual", changed.toDisplayRefreshRate());
+                    VRSettings.LOGGER.info("[VCPERF] refresh rate changed from {} to {} Hz",
+                        changed.fromDisplayRefreshRate(), changed.toDisplayRefreshRate());
+                }
                 default -> {
                 }
             }
@@ -898,13 +914,80 @@ public class MCOpenXR extends MCVR {
     }
 
     private void initDisplayRefreshRate() {
+        // claudecraft: xrRefreshRate. FB functions only when the extension is enabled (their pointers are null
+        // otherwise), the chosen rate only when the runtime offers it, and live changes from the settings
+        if (!this.instance.getCapabilities().XR_FB_display_refresh_rate) {
+            VRSettings.LOGGER.info("[VCPERF] refresh rate: XR_FB_display_refresh_rate not enabled, runtime default");
+            org.vivecraft.client_vr.perf.PerfProbe.put("xrRefreshRateActual", "n/a");
+            return;
+        }
+        this.applyRefreshRate("init");
+        this.refreshRateApplier = () -> this.applyRefreshRate("setting");
+        org.vivecraft.client_vr.perf.PerfHooks.refreshRateApplier = this.refreshRateApplier;
+    }
+
+    /**
+     * claudecraft: requests the {@code xrRefreshRate} setting if the runtime enumerates it, else the highest
+     * enumerated rate (MAX, the original behaviour), and logs the rate in effect.
+     * The switch can complete a few frames later; {@code XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB} logs it.
+     */
+    private void applyRefreshRate(String reason) {
+        if (this.session == null) {
+            return;
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer refreshRateCount = stack.callocInt(1);
-            FBDisplayRefreshRate.xrEnumerateDisplayRefreshRatesFB(session, refreshRateCount, null);
+            int error = FBDisplayRefreshRate.xrEnumerateDisplayRefreshRatesFB(this.session, refreshRateCount, null);
+            logError(error, "xrEnumerateDisplayRefreshRatesFB", "get count");
+            if (error < 0 || refreshRateCount.get(0) <= 0) {
+                return;
+            }
             FloatBuffer refreshRateBuffer = stack.callocFloat(refreshRateCount.get(0));
-            FBDisplayRefreshRate.xrEnumerateDisplayRefreshRatesFB(session, refreshRateCount, refreshRateBuffer);
-            refreshRateBuffer.rewind();
-            FBDisplayRefreshRate.xrRequestDisplayRefreshRateFB(session, refreshRateBuffer.get(refreshRateCount.get(0) -1));
+            error = FBDisplayRefreshRate.xrEnumerateDisplayRefreshRatesFB(this.session, refreshRateCount,
+                refreshRateBuffer);
+            logError(error, "xrEnumerateDisplayRefreshRatesFB", "get rates");
+            if (error < 0) {
+                return;
+            }
+
+            VRSettings.XrRefreshRate setting = this.dh.vrSettings.xrRefreshRate;
+            float wanted = setting == null ? 0.0F : switch (setting) {
+                case HZ72 -> 72.0F;
+                case HZ90 -> 90.0F;
+                case HZ120 -> 120.0F;
+                default -> 0.0F;
+            };
+            float highest = 0.0F;
+            float chosen = 0.0F;
+            List<Float> offered = new ArrayList<>();
+            for (int i = 0; i < refreshRateCount.get(0); i++) {
+                float rate = refreshRateBuffer.get(i);
+                offered.add(rate);
+                highest = Math.max(highest, rate);
+                if (wanted > 0.0F && Math.abs(rate - wanted) < 0.5F) {
+                    chosen = rate;
+                }
+            }
+            if (chosen == 0.0F) {
+                if (wanted > 0.0F) {
+                    VRSettings.LOGGER.warn("[VCPERF] refresh rate {} Hz is not offered {}, using the highest", wanted,
+                        offered);
+                }
+                chosen = highest;
+            }
+
+            error = FBDisplayRefreshRate.xrRequestDisplayRefreshRateFB(this.session, chosen);
+            logError(error, "xrRequestDisplayRefreshRateFB", String.valueOf(chosen));
+
+            FloatBuffer current = stack.callocFloat(1);
+            int getError = FBDisplayRefreshRate.xrGetDisplayRefreshRateFB(this.session, current);
+            logError(getError, "xrGetDisplayRefreshRateFB", "");
+            float actual = getError >= 0 ? current.get(0) : -1.0F;
+
+            org.vivecraft.client_vr.perf.PerfProbe.put("xrRefreshRateRequested", chosen);
+            org.vivecraft.client_vr.perf.PerfProbe.put("xrRefreshRateActual", actual);
+            VRSettings.LOGGER.info("[VCPERF] refresh rate reason={} setting={} offered={} requested={} result={} actual={}",
+                reason, setting, offered, chosen, error, actual);
         }
     }
 
