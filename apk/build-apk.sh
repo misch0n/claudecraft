@@ -33,7 +33,7 @@ case "$VARIANT" in replace|side) ;; *) echo "--variant must be replace or side" 
 : "${ANDROID_HOME:?set ANDROID_HOME}" "${APKTOOL_JAR:?set APKTOOL_JAR}" "${DEX2JAR:?set DEX2JAR}"
 
 BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
-ANDROID_JAR="$(ls -d "$ANDROID_HOME"/platforms/android-* | sort -V | tail -1)/android.jar"
+ANDROID_JAR="$(ls -d "$ANDROID_HOME"/platforms/android-* | grep -v -E 'beta|ext|preview' | sort -V | tail -1)/android.jar"
 APKTOOL=(java -jar "$APKTOOL_JAR")
 mkdir -p "$OUT"
 OUT="$(realpath "$OUT")"
@@ -89,6 +89,16 @@ if [ "${#SOURCES[@]}" -gt 0 ]; then
       cp "$WORK/patchsmali/smali/$top.smali" "$dir/$(dirname "$top")/"
     echo "- \`$top\` ($status in \`${dir#$WORK/app/}\`)" >> "$OUT/patch-report-$VARIANT.md"
     if [ "$status" = replaced ]; then
+      # How far the shipped class is from the one we compile (debug info stripped): 0 means our source
+      # matches what QuestCraft shipped, so anything else is a change we made on purpose.
+      strip() { grep -v -E '^\s*\.(line|local|end local|restart local|param|end param|prologue|source)( |$)' "$1" | sed '/^\s*$/d'; }
+      body_diff=$(diff <(strip "$WORK/orig/$top.smali") <(strip "$dir/$top.smali") | grep -c '^[<>]' || true)
+      echo "  - body lines differing from the shipped class: $body_diff" >> "$OUT/patch-report-$VARIANT.md"
+      if [ "$top" = pojlib/util/JREUtils ]; then
+        thr=$(grep -c 'ActivityManager\$MemoryInfo;->threshold' "$WORK/orig/$top.smali" || true)
+        echo "  - shipped JREUtils reads MemoryInfo.threshold: $thr (0 = pre-2025-06-09 heap logic: 2048/4096/1536 MB)" >> "$OUT/patch-report-$VARIANT.md"
+        mkdir -p "$OUT/shipped-smali" && cp "$WORK/orig/$top.smali" "$OUT/shipped-smali/"
+      fi
       if ! diff <(grep -E '^\.(method|field)' "$WORK/orig/$top.smali" | sort) \
                 <(grep -E '^\.(method|field)' "$dir/$top.smali" | sort) > "$WORK/sig.diff"; then
         { echo '  - member signatures differ from the APK (expected where we changed them):'; echo '```diff'; cat "$WORK/sig.diff"; echo '```'; } >> "$OUT/patch-report-$VARIANT.md"

@@ -24,8 +24,9 @@ other_diff = sorted(n for n in (set(ours) & set(theirs)) - common if ours[n] != 
 print(f"### `{sys.argv[1].split('/')[-1]}` vs `{sys.argv[2].split('/')[-1]}`")
 print(f"- classes identical: **{len(same)}** / {len(common)} common")
 print(f"- classes differing: **{len(diff)}**, only in ours: {len(only_ours)}, only in release: {len(only_theirs)}")
+print(f"- other differing files (resources, manifest): {len(other_diff)}")
 for title, items in (("differing classes", diff), ("only in ours", only_ours),
-                     ("only in release", only_theirs), ("other differing files", other_diff)):
+                     ("only in release", only_theirs)):
     if items:
         print(f"\n<details><summary>{title} ({len(items)})</summary>\n")
         print("\n".join(f"- `{n}`" for n in items[:200]))
