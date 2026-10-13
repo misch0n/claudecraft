@@ -15,6 +15,8 @@ import net.minecraft.Util;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.GraphicsStatus;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.ConnectScreen;
+import net.minecraft.client.gui.screens.LevelLoadingScreen;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.renderer.*;
 import net.minecraft.client.renderer.block.BlockRenderDispatcher;
@@ -161,7 +163,7 @@ public class MenuWorldRenderer {
         }
 
         // claudecraft: freeMenuWorldInGame, don't load a menu world while a level exists
-        if (ClientDataHolderVR.getInstance().vrSettings.freeMenuWorldInGame && this.mc.level != null) {
+        if (ClientDataHolderVR.getInstance().vrSettings.freeMenuWorldInGame && isInGame()) {
             VRSettings.LOGGER.info("Vivecraft: MenuWorlds: In a world, loading the menu world on the title screen");
             this.reloadOnTitleScreen = true;
             return;
@@ -196,7 +198,7 @@ public class MenuWorldRenderer {
     public void checkTask() {
         // claudecraft: freeMenuWorldInGame. this runs before every client tick (MinecraftVRMixin), so it also
         // catches a load that finishes after the join, or the toggle being turned on in a world
-        if (this.mc.level != null) {
+        if (isInGame()) {
             if (ClientDataHolderVR.getInstance().vrSettings.freeMenuWorldInGame) {
                 freeInGame();
                 return;
@@ -319,7 +321,7 @@ public class MenuWorldRenderer {
 
     public void prepare() {
         // claudecraft: freeMenuWorldInGame, don't build while a level exists, it is rebuilt on the title screen
-        if (ClientDataHolderVR.getInstance().vrSettings.freeMenuWorldInGame && this.mc.level != null) {
+        if (ClientDataHolderVR.getInstance().vrSettings.freeMenuWorldInGame && isInGame()) {
             this.reloadOnTitleScreen = true;
             return;
         }
@@ -641,6 +643,14 @@ public class MenuWorldRenderer {
         }
         this.animatedSprites = null;
         this.ready = false;
+    }
+
+    /**
+     * claudecraft: freeMenuWorldInGame. true while a level exists, or a world is loading or being connected to
+     */
+    private boolean isInGame() {
+        return this.mc.level != null || this.mc.screen instanceof LevelLoadingScreen ||
+            this.mc.screen instanceof ConnectScreen;
     }
 
     /**

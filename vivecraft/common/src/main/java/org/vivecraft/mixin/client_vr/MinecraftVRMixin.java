@@ -207,6 +207,15 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
             return;
         }
 
+        // claudecraft: free the menu world as soon as a world loads or connects, before its memory peak
+        // (freeMenuWorldInGame). here, because the singleplayer loading loop renders frames but runs no client ticks
+        if (ClientDataHolderVR.getInstance().vrSettings.freeMenuWorldInGame &&
+            ClientDataHolderVR.getInstance().menuWorldRenderer != null &&
+            (this.screen instanceof LevelLoadingScreen || this.screen instanceof ConnectScreen))
+        {
+            ClientDataHolderVR.getInstance().menuWorldRenderer.freeInGame();
+        }
+
         // handle vr events, regardless of VR active state
         ClientDataHolderVR.getInstance().vr.handleEvents();
 
