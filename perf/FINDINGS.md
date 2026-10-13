@@ -96,6 +96,26 @@ plausible, but not re-checked line by line. **est** = estimate, unmeasured.
   `QuestCraft-6.0.0`, but the JVM flags and Unity code are compiled into the APK and may predate the branch
   head read here. To confirm the real flags, have the M5 probe log
   `ManagementFactory.getRuntimeMXBean().getInputArguments()` (JVM options only, no game arguments).
+- **M9. Crash forensics: classify every crash before changing anything.**
+  - **Evidence is lost on relaunch.** ✔ The launcher deletes `files/latestlog.txt` when QuestCraft starts
+    (`Logger.java:29`) and runs `logcat -c` when Minecraft starts (`JREUtils.java:112`). After a crash, pull logs
+    **before** relaunching.
+  - **Records that survive relaunches** (no root needed; verify on Quest OS):
+    - `adb shell dumpsys activity exit-info com.qcxr.qcxr`: Android's record of recent process deaths, with
+      reason (low memory, native crash, signal, …), timestamp and PSS/RSS at death.
+    - `adb shell dumpsys dropbox --print data_app_native_crash` (also `data_app_crash`, `SYSTEM_TOMBSTONE`):
+      native crash backtraces, for example in LTW, the driver or the JVM.
+    - Instance folder: `crash-reports/` (Minecraft) and `hs_err_pid*.log` (JVM fatal errors; written to the
+      game directory if the JVM gets the chance).
+  - **User report (2026-10-13):** launch crashes are more likely when relaunching right after a crash; the
+    2nd or 3rd try works; waiting helps. A broken file would not heal by waiting, so this points at transient
+    state. Candidates:
+    - (a) The OS is still reclaiming memory after a memory kill. Background services restart, and the
+      compositor releases the dead session's buffers asynchronously. That leaves less headroom at the VR-start
+      memory peak, and in auto mode the heap limit is computed from free RAM at that moment.
+    - (b) The OpenXR runtime is still tearing down the dead session, combined with V12b's fixed 2.5 s hand-off.
+    - (c) Thermal throttling after a long session slows startup and eats the hand-off margin.
+  - The exit-info reason and memory-at-death distinguish the launch crash from the in-game crash.
 - **M8. Privacy: `logcat` contains the Minecraft access token.** ✔ `Pojlib JREUtils.java:243` runs
   `System.out.println(JVMArgs)`, and those arguments include `--accessToken`. `tools/logs.sh` must not save raw
   `logcat` into anything that leaves the machine, or must redact `--accessToken <…>` first. Have the script grep
