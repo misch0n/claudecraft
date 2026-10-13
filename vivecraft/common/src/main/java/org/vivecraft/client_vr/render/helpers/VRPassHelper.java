@@ -154,6 +154,8 @@ public class VRPassHelper {
         }
 
         Profiler.get().popPush("2D Keyboard");
+        // claudecraft: lazyAuxBuffers, in case the keyboard or radial menu opened after setupRenderConfiguration
+        DATA_HOLDER.vrRenderer.allocateLazyGuiBuffers();
         if (KeyboardHandler.SHOWING && !DATA_HOLDER.vrSettings.physicalKeyboard) {
             MC.mainRenderTarget = KeyboardHandler.FRAMEBUFFER;
             RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
@@ -187,6 +189,11 @@ public class VRPassHelper {
         // session is stopped): skip the eye passes, the empty frame is still submitted below
         boolean eyesAvailable = DATA_HOLDER.vrRenderer.isEyeFrameAvailable();
         for (RenderPass renderpass : list) {
+            // claudecraft: lazyAuxBuffers, a pass that got needed after setupRenderConfiguration still has its
+            // placeholder target, skip it for this frame, the next setupRenderConfiguration gives it its real size
+            if (!DATA_HOLDER.vrRenderer.isPassTargetAllocated(renderpass)) {
+                continue;
+            }
             DATA_HOLDER.currentPass = renderpass;
 
             if (DATA_HOLDER.vrSettings.displayMirrorUseScreenshotCamera && DATA_HOLDER.cameraTracker.isVisible()) {
