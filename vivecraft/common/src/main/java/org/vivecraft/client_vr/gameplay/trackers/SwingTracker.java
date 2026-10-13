@@ -118,6 +118,14 @@ public class SwingTracker implements ItemInUseTracker, DebugRenderTracker {
     }
 
     /**
+     * claudecraft: clearTrackerRefs. Drops the entities hit by the last swing, which were only replaced by the next
+     * swing that hit something. Called on disconnect and dimension change.
+     */
+    public void clearLevelReferences() {
+        Arrays.fill(this.lastHitEntities, Collections.emptyList());
+    }
+
+    /**
      * @param itemStack ItemStack to check
      * @return if the given {@code itemStack} is a Tool
      */

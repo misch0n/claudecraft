@@ -37,6 +37,15 @@ public class EntityInteractionModule implements InteractModule {
         this.inEntityHit[hand.ordinal()] = null;
     }
 
+    /**
+     * claudecraft: clearTrackerRefs. Drops the last touched entity, which was only overwritten on the first player
+     * tick after the next join, so it kept the old level alive. Called on disconnect and dimension change.
+     */
+    public void clearLevelReferences() {
+        this.inEntityHit[0] = null;
+        this.inEntityHit[1] = null;
+    }
+
     @Override
     public boolean isActive(LocalPlayer player, InteractionHand hand, Vec3 handPosition) {
         if (this.dh.vrSettings.realisticEntityInteractEnabled) {

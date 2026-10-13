@@ -55,6 +55,9 @@ public abstract class ClientPacketListenerVRMixin extends ClientCommonPacketList
 
     @Inject(method = "handleRespawn", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;setLevel(Lnet/minecraft/client/multiplayer/ClientLevel;Lnet/minecraft/client/gui/screens/ReceivingLevelScreen$Reason;)V", shift = At.Shift.AFTER))
     private void vivecraft$resetOnDimensionChange(CallbackInfo ci) {
+        // claudecraft: don't keep entities of the old dimension's level (clearTrackerRefs)
+        vivecraft$clearTrackerRefs();
+
         this.vivecraft$resetServerState();
     }
 
@@ -81,6 +84,16 @@ public abstract class ClientPacketListenerVRMixin extends ClientCommonPacketList
         ClientNetworking.resetServerSettings();
         ClientNetworking.resetOnceServerSettings();
         ClientNetworking.NEEDS_RESET = true;
+        // claudecraft: don't keep entities of the old level until the next join (clearTrackerRefs)
+        vivecraft$clearTrackerRefs();
+    }
+
+    @Unique
+    private void vivecraft$clearTrackerRefs() {
+        if (ClientDataHolderVR.getInstance().vrSettings.clearTrackerRefs) {
+            ClientDataHolderVR.getInstance().swingTracker.clearLevelReferences();
+            ClientDataHolderVR.getInstance().entityModule.clearLevelReferences();
+        }
     }
 
     @Inject(method = "sendChat", at = @At("TAIL"))
