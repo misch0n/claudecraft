@@ -200,7 +200,18 @@ public class JREUtils {
         List<String> userArgs = getJavaArgs(activity, instance);
 
         //Add automatically generated args
-        if (API.customRAMValue) {
+        // claudecraft (jvm.policy, PLAN 1j/1k): fixed -Xmx, small -Xms so the GC can return memory; else QuestCraft's flags
+        final boolean ccPolicy = ClaudecraftConfig.isJvmPolicyClaudecraft();
+        final boolean ccG1 = ccPolicy && ClaudecraftConfig.isJvmGcG1();
+        int ccXmx = 0;
+        if (ccPolicy) {
+            ccXmx = claudecraftHeapMb();
+            int xms = Math.min(512, ccXmx);
+            Logger.getInstance().appendToLog("QuestCraft: Setting JVM memory to " + ccXmx + "MB (claudecraft policy, "
+                    + (API.customRAMValue ? "custom RAM value" : "default 2048 MB") + ", -Xms" + xms + "M, " + (ccG1 ? "G1" : "ZGC") + ")");
+            userArgs.add("-Xms" + xms + "M");
+            userArgs.add("-Xmx" + ccXmx + "M");
+        } else if (API.customRAMValue) {
             Logger.getInstance().appendToLog("QuestCraft: Setting JVM memory to " + API.memoryValue + "MB (Custom)");
             userArgs.add("-Xms" + API.memoryValue + "M");
             userArgs.add("-Xmx" + API.memoryValue + "M");
@@ -221,9 +232,20 @@ public class JREUtils {
 
 
         // Garbage collection
-        userArgs.add("-XX:+UseZGC");
-        userArgs.add("-XX:+ZGenerational");
-        userArgs.add("-XX:-ZProactive");
+        if (ccG1) {
+            // claudecraft jvm.gc=g1: compressed oops, uncommits; never together with the ZGC flags
+            userArgs.add("-XX:+UseG1GC");
+            userArgs.add("-XX:MaxGCPauseMillis=25");
+            userArgs.add("-XX:G1PeriodicGCInterval=30000");
+        } else {
+            userArgs.add("-XX:+UseZGC");
+            userArgs.add("-XX:+ZGenerational");
+            userArgs.add("-XX:-ZProactive");
+            if (ccPolicy) {
+                userArgs.add("-XX:SoftMaxHeapSize=" + (ccXmx * 3 / 4) + "M");
+                userArgs.add("-XX:ZUncommitDelay=30");
+            }
+        }
         userArgs.add("-XX:+UnlockDiagnosticVMOptions");
         userArgs.add("-XX:-ImplicitNullChecks");
         userArgs.add("-XX:+DisableExplicitGC");
@@ -239,6 +261,15 @@ public class JREUtils {
         userArgs.add("-Dorg.lwjgl.opengles.libname=" + "/system/lib64/libGLESv3.so");
         userArgs.add("-Dorg.lwjgl.egl.libname=" + "/system/lib64/libEGL_dri.so");
 
+        // claudecraft (jvm.gcLog, jvm.extraArgs; PLAN 1l/1m). Extra args go last among the JVM options (they win);
+        // JVMArgs below starts with -cp and the main class, so anything after it would be a game argument.
+        if (ClaudecraftConfig.getBoolean(ClaudecraftConfig.JVM_GC_LOG)) {
+            userArgs.add("-Xlog:gc*:file=" + Constants.USER_HOME + "/gc.log:uptime,level,tags:filecount=3,filesize=10M");
+        }
+        userArgs.addAll(ClaudecraftConfig.getJvmExtraArgs());
+        Logger.getInstance().appendToLog("[claudecraft] JVM options (jvm.policy=" + ClaudecraftConfig.getString(ClaudecraftConfig.JVM_POLICY)
+                + (ccPolicy ? ", jvm.gc=" + ClaudecraftConfig.getString(ClaudecraftConfig.JVM_GC) : ", jvm.gc ignored") + "): " + userArgs);
+
         userArgs.addAll(JVMArgs);
         System.out.println(JVMArgs);
 
@@ -251,6 +282,19 @@ public class JREUtils {
         int exitCode = VMLauncher.launchJVM(userArgs.toArray(new String[0]));
         Logger.getInstance().appendToLog("Java Exit code: " + exitCode);
         return exitCode;
+    }
+
+    /** claudecraft heap ceiling (MB): QuestCraft's custom RAM value when enabled and valid, else 2048. */
+    private static int claudecraftHeapMb() {
+        if (API.customRAMValue) {
+            try {
+                int mb = Integer.parseInt(String.valueOf(API.memoryValue).trim());
+                if (mb >= 512) return mb;
+            } catch (NumberFormatException ignored) {
+            }
+            Logger.getInstance().appendToLog("[claudecraft] Custom RAM value '" + API.memoryValue + "' is not a usable MB value; using 2048");
+        }
+        return 2048;
     }
 
     private static void writeDNS(Context ctx, File out) throws IOException {

@@ -2,3 +2,4 @@
 # One path per line, relative to the repo root. Only list files we changed; every other class stays
 # exactly as QuestCraft shipped it.
 pojlib/src/main/java/pojlib/util/JREUtils.java
+pojlib/src/main/java/pojlib/util/ClaudecraftConfig.java
