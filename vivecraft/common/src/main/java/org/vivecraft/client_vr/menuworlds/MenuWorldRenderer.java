@@ -15,6 +15,7 @@ import net.minecraft.Util;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.GraphicsStatus;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.client.renderer.*;
 import net.minecraft.client.renderer.block.BlockRenderDispatcher;
 import net.minecraft.client.renderer.block.model.BlockModelPart;
@@ -64,6 +65,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MenuWorldRenderer {
     private static final ResourceLocation MOON_LOCATION = ResourceLocation.withDefaultNamespace(
@@ -118,6 +120,10 @@ public class MenuWorldRenderer {
     private final float[] rainSizeZ = new float[1024];
 
     private CompletableFuture<FakeBlockAccess> getWorldTask;
+    // claudecraft: tells a running loader that its world is not wanted anymore
+    private AtomicBoolean getWorldCancelled;
+    // claudecraft: the menu world was freed or not loaded because a level exists, load it on the title screen
+    private boolean reloadOnTitleScreen;
 
     public int renderMaxTime = 40;
     public Vec3i segmentSize = new Vec3i(64, 64, 64);
@@ -154,11 +160,24 @@ public class MenuWorldRenderer {
             return;
         }
 
+        // claudecraft: freeMenuWorldInGame, don't load a menu world while a level exists
+        if (ClientDataHolderVR.getInstance().vrSettings.freeMenuWorldInGame && this.mc.level != null) {
+            VRSettings.LOGGER.info("Vivecraft: MenuWorlds: In a world, loading the menu world on the title screen");
+            this.reloadOnTitleScreen = true;
+            return;
+        }
+
         try {
             VRSettings.LOGGER.info("Vivecraft: MenuWorlds: Initializing main menu world renderer...");
             loadRenderers();
+            AtomicBoolean cancelled = new AtomicBoolean();
+            this.getWorldCancelled = cancelled;
             this.getWorldTask = CompletableFuture.supplyAsync(() -> {
                 try (InputStream inputStream = MenuWorldDownloader.getRandomWorld()) {
+                    if (cancelled.get()) {
+                        // claudecraft: a level was joined while the world was picked or downloaded
+                        return null;
+                    }
                     VRSettings.LOGGER.info("Vivecraft: MenuWorlds: Loading world data...");
                     return inputStream != null ? MenuWorldExporter.loadWorld(inputStream) : null;
                 } catch (Exception e) {
@@ -175,6 +194,19 @@ public class MenuWorldRenderer {
     }
 
     public void checkTask() {
+        // claudecraft: freeMenuWorldInGame. this runs before every client tick (MinecraftVRMixin), so it also
+        // catches a load that finishes after the join, or the toggle being turned on in a world
+        if (this.mc.level != null) {
+            if (ClientDataHolderVR.getInstance().vrSettings.freeMenuWorldInGame) {
+                freeInGame();
+                return;
+            }
+        } else if (this.reloadOnTitleScreen && this.mc.screen instanceof TitleScreen && this.mc.getOverlay() == null) {
+            this.reloadOnTitleScreen = false;
+            VRSettings.LOGGER.info("Vivecraft: MenuWorlds: Back on the title screen, reloading the menu world");
+            init();
+        }
+
         if (this.getWorldTask == null || !this.getWorldTask.isDone()) {
             return;
         }
@@ -286,6 +318,11 @@ public class MenuWorldRenderer {
     }
 
     public void prepare() {
+        // claudecraft: freeMenuWorldInGame, don't build while a level exists, it is rebuilt on the title screen
+        if (ClientDataHolderVR.getInstance().vrSettings.freeMenuWorldInGame && this.mc.level != null) {
+            this.reloadOnTitleScreen = true;
+            return;
+        }
         if (this.vertexBuffers == null && !this.building) {
             VRSettings.LOGGER.info("Vivecraft: MenuWorlds: Building geometry...");
 
@@ -604,6 +641,36 @@ public class MenuWorldRenderer {
         }
         this.animatedSprites = null;
         this.ready = false;
+    }
+
+    /**
+     * claudecraft: freeMenuWorldInGame. stops loading and building, frees the GPU buffers and drops the block data,
+     * so nothing of the menu world stays in memory while a level is loaded. it is loaded again on the title screen
+     */
+    public void freeInGame() {
+        if (this.blockAccess == null && this.getWorldTask == null && this.vertexBuffers == null &&
+            this.bufferBuilders == null && !this.building)
+        {
+            return;
+        }
+        VRSettings.LOGGER.info("Vivecraft: MenuWorlds: Freeing the menu world while in a world");
+        if (this.getWorldTask != null) {
+            // a loader that hasn't started is skipped, a running one finishes and its world is dropped
+            if (this.getWorldCancelled != null) {
+                this.getWorldCancelled.set(true);
+            }
+            this.getWorldTask.cancel(false);
+            this.getWorldTask = null;
+        }
+        this.getWorldCancelled = null;
+        // waits for the builder tasks before freeing their buffers, then frees the vertex buffers
+        destroy();
+        if (this.reenableShaders) {
+            this.reenableShaders = false;
+            IrisHelper.setShadersActive(true);
+        }
+        setWorld(null);
+        this.reloadOnTitleScreen = true;
     }
 
     public void completeDestroy() {

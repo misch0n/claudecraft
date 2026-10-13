@@ -60,6 +60,13 @@ public abstract class ClientPacketListenerVRMixin extends ClientCommonPacketList
             ClientDataHolderVR.getInstance().vrPlayer.teleportWarning = true;
             ClientDataHolderVR.getInstance().vrPlayer.vrSwitchWarning = false;
         }
+
+        // claudecraft: free the menu world while in a world (freeMenuWorldInGame)
+        if (ClientDataHolderVR.getInstance().menuWorldRenderer != null &&
+            ClientDataHolderVR.getInstance().vrSettings.freeMenuWorldInGame)
+        {
+            ClientDataHolderVR.getInstance().menuWorldRenderer.freeInGame();
+        }
     }
 
     @Inject(method = "handleRespawn", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;setLevel(Lnet/minecraft/client/multiplayer/ClientLevel;Lnet/minecraft/client/gui/screens/ReceivingLevelScreen$Reason;)V", shift = At.Shift.AFTER))
