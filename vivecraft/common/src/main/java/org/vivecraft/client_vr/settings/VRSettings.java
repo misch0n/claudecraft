@@ -175,6 +175,13 @@ public class VRSettings {
         AFTER_SHADER
     }
 
+    public enum XrRefreshRate implements OptionEnum<XrRefreshRate> {
+        MAX,
+        HZ72,
+        HZ90,
+        HZ120
+    }
+
     public enum VRProvider implements OptionEnum<VRProvider> {
         OPENVR,
         OPENXR,
@@ -735,6 +742,38 @@ public class VRSettings {
     @SettingField(VrOptions.MONO_FOV)
     @Deprecated
     public float monoFOV;
+
+    // claudecraft: performance and stability toggles; defaults and findings are listed in PLAN.md
+    @SettingField(VrOptions.PERF_MEMORY_LOG)
+    public boolean perfMemoryLog = true;
+    @SettingField(VrOptions.FREE_MENU_WORLD_IN_GAME)
+    public boolean freeMenuWorldInGame = true;
+    @SettingField(VrOptions.MENU_WORLD_STREAM_LOAD)
+    public boolean menuWorldStreamLoad = true;
+    @SettingField(VrOptions.SHARE_OUTLINE_TARGETS)
+    public boolean shareOutlineTargets = true;
+    @SettingField(VrOptions.LAZY_AUX_BUFFERS)
+    public boolean lazyAuxBuffers = true;
+    @SettingField(VrOptions.FIX_SUPPORTER_LEAK)
+    public boolean fixSupporterLeak = true;
+    @SettingField(VrOptions.CLEAR_TRACKER_REFS)
+    public boolean clearTrackerRefs = true;
+    @SettingField(VrOptions.XR_STARTUP_RETRY)
+    public boolean xrStartupRetry = true;
+    @SettingField(VrOptions.XR_SESSION_STATE_HANDLING)
+    public boolean xrSessionStateHandling = true;
+    @SettingField(VrOptions.XR_LATE_FRAME_WAIT)
+    public boolean xrLateFrameWait = true;
+    @SettingField(VrOptions.XR_REFRESH_RATE)
+    public XrRefreshRate xrRefreshRate = XrRefreshRate.HZ90;
+    @SettingField(VrOptions.CACHE_INPUT_ORIGINS)
+    public boolean cacheInputOrigins = true;
+    @SettingField(VrOptions.GL_ERROR_CHECKS)
+    public boolean glErrorChecks = false;
+    @SettingField(VrOptions.LTW_LINEAR_FILTER_FIX)
+    public boolean ltwLinearFilterFix = true;
+    @SettingField(VrOptions.XR_PERF_HINTS)
+    public boolean xrPerfHints = false;
     //
 
     public ServerOverrides overrides = new ServerOverrides();
@@ -2556,7 +2595,28 @@ public class VRSettings {
         NULLVR_HAPTICS(OptionType.BOOLEAN),
         NULLVR_IPD(0.05F, 0.2F, 0.001F, 3),
         NULLVR_EYE_ANGLE(0F, 25F, 0.5F, 1),
-        NULLVR_FOV(50F, 120F, 1F, 0);
+        NULLVR_FOV(50F, 120F, 1F, 0),
+        // claudecraft: performance and stability (see PLAN.md)
+        PERF_MEMORY_LOG(OptionType.BOOLEAN),
+        FREE_MENU_WORLD_IN_GAME(OptionType.BOOLEAN),
+        MENU_WORLD_STREAM_LOAD(OptionType.BOOLEAN),
+        SHARE_OUTLINE_TARGETS(OptionType.BOOLEAN),
+        LAZY_AUX_BUFFERS(OptionType.BOOLEAN),
+        FIX_SUPPORTER_LEAK(OptionType.BOOLEAN),
+        CLEAR_TRACKER_REFS(OptionType.BOOLEAN),
+        XR_STARTUP_RETRY(OptionType.BOOLEAN),
+        XR_SESSION_STATE_HANDLING(OptionType.BOOLEAN),
+        XR_LATE_FRAME_WAIT(OptionType.BOOLEAN),
+        XR_REFRESH_RATE {
+            @Override
+            void onOptionChange() {
+                org.vivecraft.client_vr.perf.PerfHooks.onRefreshRateChanged();
+            }
+        },
+        CACHE_INPUT_ORIGINS(OptionType.BOOLEAN),
+        GL_ERROR_CHECKS(OptionType.BOOLEAN),
+        LTW_LINEAR_FILTER_FIX(OptionType.BOOLEAN),
+        XR_PERF_HINTS(OptionType.BOOLEAN);
         private final OptionType type;
         private final float valueStep;
         private final float valueMin;

@@ -40,6 +40,8 @@ public class VivecraftMainSettings extends GuiListScreen {
         entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.VR_SETTINGS_BUTTON_POSITION));
         entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.MODIFY_PAUSE_MENU));
 
+        entries.add(new SettingsList.ScreenEntry("vivecraft.options.screen.performance", GuiPerformanceSettings::new));
+
         entries.add(new SettingsList.CategoryEntry(Component.literal("Debug")));
 
         entries.add(new SettingsList.ScreenEntry("vivecraft.options.screen.debug", GuiDebugSettings::new));

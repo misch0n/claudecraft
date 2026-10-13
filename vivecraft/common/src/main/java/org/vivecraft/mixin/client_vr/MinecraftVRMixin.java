@@ -463,6 +463,7 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
     private void vivecraft$vrTick(CallbackInfo ci) {
         ClientDataHolderVR dataHolder = ClientDataHolderVR.getInstance();
         dataHolder.tickCounter++;
+        org.vivecraft.client_vr.perf.PerfProbe.tick();
 
         // general chat notifications
         if (this.level != null) {

@@ -42,6 +42,7 @@ public abstract class ClientPacketListenerVRMixin extends ClientCommonPacketList
 
     @Inject(method = "handleLogin", at = @At("TAIL"))
     private void vivecraft$resetOnLogin(CallbackInfo ci) {
+        org.vivecraft.client_vr.perf.PerfProbe.markJoin();
         this.vivecraft$resetServerState();
     }
 
@@ -69,6 +70,7 @@ public abstract class ClientPacketListenerVRMixin extends ClientCommonPacketList
 
     @Inject(method = "close", at = @At("TAIL"))
     private void vivecraft$cleanup(CallbackInfo ci) {
+        org.vivecraft.client_vr.perf.PerfProbe.milestone("leave");
         ClientNetworking.resetServerSettings();
         ClientNetworking.resetOnceServerSettings();
         ClientNetworking.NEEDS_RESET = true;
