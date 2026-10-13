@@ -82,6 +82,9 @@ public class VRState {
 
             dh.menuWorldRenderer.init();
 
+            org.vivecraft.client_vr.perf.PerfProbe.logConfig("vr_init");
+            org.vivecraft.client_vr.perf.PerfProbe.milestone("vr_init");
+
             try {
                 String garbageCollector = StringUtils.getCommonPrefix(
                     ManagementFactory.getGarbageCollectorMXBeans().stream().map(MemoryManagerMXBean::getName)
