@@ -79,8 +79,15 @@ jobs:
   # Desktop GL, not the headset's GL ES/OpenXR path: it proves startup, VR init, menu world and a world
   # join, not headset behaviour.
   smoke:
+    name: smoke (${{ matrix.variant }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # fixes-on: our defaults and our launcher's JVM heap policy.
+        # fixes-off: every claudecraft toggle off (= the original Vivecraft code paths) and QuestCraft-like JVM flags.
+        variant: [fixes-on, fixes-off]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -110,11 +117,33 @@ jobs:
         working-directory: vivecraft/fabric/run
         run: |
           printf 'onboardAccessibility:false\nrenderDistance:4\nsimulationDistance:5\npauseOnLostFocus:false\nnarrator:0\ntutorialStep:none\nskipMultiplayerWarning:true\nsoundCategory_master:0.0\n' > options.txt
-          printf '{\n  "vrEnabled": "true",\n  "rememberVr": "true",\n  "stereoProviderPluginID": "NULLVR",\n  "alwaysShowUpdates": "false"\n}\n' > config/vivecraft-client-config.json
+          if [ "${{ matrix.variant }}" = fixes-off ]; then
+            off='"freeMenuWorldInGame":"false","menuWorldStreamLoad":"false","shareOutlineTargets":"false","lazyAuxBuffers":"false","fixSupporterLeak":"false","clearTrackerRefs":"false","xrStartupRetry":"false","xrSessionStateHandling":"false","xrLateFrameWait":"false","cacheInputOrigins":"false","glErrorChecks":"true","ltwLinearFilterFix":"false","xrRefreshRate":"MAX",'
+          else
+            off=''
+          fi
+          printf '{%s"vrEnabled":"true","rememberVr":"true","stereoProviderPluginID":"NULLVR","alwaysShowUpdates":"false"}\n' "$off" > config/vivecraft-client-config.json
+          cat config/vivecraft-client-config.json
       - name: Run client, join the world, wait for the 60 s memory line
         working-directory: vivecraft
         run: |
           export LIBGL_ALWAYS_SOFTWARE=1
+          # JVM heap policy, like QuestCraft's launcher would start the game (ZGC either way)
+          if [ "${{ matrix.variant }}" = fixes-off ]; then
+            export JAVA_TOOL_OPTIONS="-XX:+UseZGC -XX:+ZGenerational -XX:-ZProactive -Xms1024m -Xmx2048m"
+          else
+            export JAVA_TOOL_OPTIONS="-XX:+UseZGC -XX:+ZGenerational -XX:-ZProactive -Xms512m -Xmx2048m -XX:SoftMaxHeapSize=1536m -XX:ZUncommitDelay=30"
+          fi
+          mkdir -p ../report
+          # sample the game process (not Gradle) every 2 s: time, RSS kB, PSS kB
+          ( while true; do
+              pid=$(pgrep -f devlaunchinjector | head -1)
+              if [ -n "$pid" ]; then
+                echo "$(date +%s) $(awk '/^VmRSS/{print $2}' /proc/$pid/status 2>/dev/null) $(awk '/^Pss:/{print $2}' /proc/$pid/smaps_rollup 2>/dev/null)" >> ../report/rss-samples.txt
+              fi
+              sleep 2
+            done ) &
+          sampler=$!
           xvfb-run -a -s "-screen 0 1280x720x24" bash ./gradlew :fabric:runClient --no-daemon --args="--quickPlaySingleplayer smoke" > client.log 2>&1 &
           probe=0; grep -rq 'class PerfProbe' common/src && probe=1
           for i in $(seq 1 180); do
@@ -124,6 +153,7 @@ jobs:
             if grep -q -E 'Crash report saved|---- Minecraft Crash Report|BUILD FAILED' client.log; then echo "crash or build failure"; break; fi
           done
           sleep 5
+          kill $sampler || true
           pkill -f 'net.fabricmc' || true; pkill -f GradleWrapperMain || true; sleep 5; pkill -9 java || true
       - name: Evaluate
         if: always()
@@ -144,8 +174,10 @@ jobs:
             grep -q '\[VCPERF\] config' "$log" || { echo "::error::no [VCPERF] config line (VR did not start?)"; fail=1; }
             grep -q 'label=join+60s' "$log" || { echo "::error::did not stay in the world for 60 s"; fail=1; }
           fi
-          mkdir -p ../report && exec > >(tee ../report/smoke.txt) 2>&1
-          echo "=== SUMMARY (smoke) ==="
+          mkdir -p ../report && exec > >(tee ../report/smoke-${{ matrix.variant }}.txt) 2>&1
+          echo "=== SUMMARY (smoke ${{ matrix.variant }}) ==="
+          awk 'NF==3 && $2>r{r=$2} NF==3 && $3>p{p=$3} END{printf "memory: peak RSS %d MB, peak PSS %d MB, %d samples\n", r/1024, p/1024, NR}' ../report/rss-samples.txt 2>/dev/null || true
+          grep -o -E 'label=(vr_init|join|join\+60s|leave) heapUsed=[0-9-]+M heapCommitted=[0-9-]+M heapMax=[0-9-]+M metaspace=[0-9-]+M classSpace=[0-9-]+M codeCache=[0-9-]+M direct=[0-9-]+M VmRSS=[0-9]+M' "$log" | head -6 || true
           echo "VR init: $(grep -c -E 'Vivecraft: (Garbage collector|OpenXR|NullVR)|\[VCPERF\] config' "$log") | world joined: $(grep -c -E 'joined the game|Loaded [0-9]+ advancements|label=join ' "$log") | VCPERF lines: $(grep -c '\[VCPERF\]' "$log") | errors: $(grep -c -E 'ERROR\]' "$log")"
           grep -E '\[VCPERF\] (config|mem label=(vr_init|join|join\+60s|leave))' "$log" | cut -c1-330 | head -8 || true
           grep -n -E 'ERROR\]|Exception' "$log" | grep -v -i -E 'sound|openal|realms|telemetry|narrator' | cut -c1-250 | head -15 || true
@@ -154,9 +186,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: smoke-logs
+          name: smoke-logs-${{ matrix.variant }}
           path: |
-            report/smoke.txt
+            report/
             vivecraft/client.log
             vivecraft/fabric/run/logs/
             vivecraft/fabric/run/crash-reports/
@@ -254,7 +286,7 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
-          name: smoke-logs
+          pattern: smoke-logs-*
           path: s
         continue-on-error: true
       - name: Summary
@@ -263,7 +295,7 @@ jobs:
           echo "jobs: vivecraft=${{ needs.vivecraft.result }} smoke=${{ needs.smoke.result }} apk=${{ needs.apk.result }}"
           cat r/jar-version.txt 2>/dev/null || true
           grep -E '^- ' r/jar-compare.md 2>/dev/null | head -4 || true
-          cat s/report/smoke.txt 2>/dev/null | cut -c1-400 || echo "(no smoke summary)"
+          for f in s/*/report/smoke-*.txt; do sed -n '/=== SUMMARY/,/=== END SUMMARY/p' "$f" | cut -c1-400; done 2>/dev/null || echo "(no smoke summary)"
           cat r/patch-report-replace.md 2>/dev/null | head -30 || true
           cat r/*.sha256 2>/dev/null || true
           echo "=== END REPORT ==="
