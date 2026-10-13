@@ -717,5 +717,5 @@
   "vivecraft.options.GL_ERROR_CHECKS": "OpenGL Error Checks",
   "vivecraft.options.GL_ERROR_CHECKS.tooltip": "Checks for OpenGL errors several times per frame. Only useful for debugging; each check can stall the graphics driver.",
   "vivecraft.options.LTW_LINEAR_FILTER_FIX": "Smooth GUI Filtering",
-  "vivecraft.options.LTW_LINEAR_FILTER_FIX.tooltip": "Works around QuestCraft's graphics layer turning smooth (linear) texture filtering into pixelated filtering for the GUI and other VR panels."
+  "vivecraft.options.LTW_LINEAR_FILTER_FIX.tooltip": "Works around QuestCraft's graphics layer turning smooth (linear) texture filtering into pixelated filtering for the GUI and other VR panels.\n\nTakes effect after VR restarts."
 }
