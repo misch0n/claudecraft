@@ -28,6 +28,7 @@ import java.util.concurrent.ExecutionException;
 
 import pojlib.API;
 
+import pojlib.ClaudecraftUnityPause;
 import pojlib.UnityPlayerActivity;
 import pojlib.install.Installer;
 import pojlib.install.MinecraftMeta;
@@ -99,6 +100,9 @@ public class JREUtils {
     public static void redirectAndPrintJRELog() {
         Log.v("jrelog","Log starts here");
         JREUtils.logToLogger(Logger.getInstance());
+        // claudecraft (log.keepLogcat, PLAN 1n): don't wipe the system log (it holds the previous crash);
+        // read only new lines instead, so the launcher log still starts fresh.
+        final boolean keepLogcat = ClaudecraftConfig.getBoolean(ClaudecraftConfig.LOG_KEEP_LOGCAT);
         new Thread(new Runnable(){
             int failTime = 0;
             ProcessBuilder logcatPb;
@@ -106,10 +110,16 @@ public class JREUtils {
             public void run() {
                 try {
                     if (logcatPb == null) {
-                        logcatPb = new ProcessBuilder().command("logcat", "-v", "brief", "-s", "jrelog:I", "LIBGL:I").redirectErrorStream(true);
+                        logcatPb = keepLogcat
+                                ? new ProcessBuilder().command("logcat", "-v", "brief", "-T", "1", "-s", "jrelog:I", "LIBGL:I").redirectErrorStream(true)
+                                : new ProcessBuilder().command("logcat", "-v", "brief", "-s", "jrelog:I", "LIBGL:I").redirectErrorStream(true);
                     }
-                            Log.i("jrelog-logcat","Clearing logcat");
-                    new ProcessBuilder().command("logcat", "-c").redirectErrorStream(true).start();
+                    if (keepLogcat) {
+                        Log.i("jrelog-logcat","Not clearing logcat (claudecraft log.keepLogcat)");
+                    } else {
+                        Log.i("jrelog-logcat","Clearing logcat");
+                        new ProcessBuilder().command("logcat", "-c").redirectErrorStream(true).start();
+                    }
                     Log.i("jrelog-logcat","Starting logcat");
                     java.lang.Process p = logcatPb.start();
 
@@ -193,6 +203,8 @@ public class JREUtils {
     }
 
     public static int launchJavaVM(final Activity activity, final List<String> JVMArgs, MinecraftInstances.Instance instance) throws Throwable {
+        // claudecraft (vivecraft.installBundled, PLAN 1p): API.prelaunch has run the mod manifest update by now
+        BundledVivecraft.install(activity, instance);
         JREUtils.relocateLibPath(activity);
         setJavaEnvironment(activity, instance);
 
@@ -200,7 +212,18 @@ public class JREUtils {
         List<String> userArgs = getJavaArgs(activity, instance);
 
         //Add automatically generated args
-        if (API.customRAMValue) {
+        // claudecraft (jvm.policy, PLAN 1j/1k): fixed -Xmx, small -Xms so the GC can return memory; else QuestCraft's flags
+        final boolean ccPolicy = ClaudecraftConfig.isJvmPolicyClaudecraft();
+        final boolean ccG1 = ccPolicy && ClaudecraftConfig.isJvmGcG1();
+        int ccXmx = 0;
+        if (ccPolicy) {
+            ccXmx = claudecraftHeapMb();
+            int xms = Math.min(512, ccXmx);
+            Logger.getInstance().appendToLog("QuestCraft: Setting JVM memory to " + ccXmx + "MB (claudecraft policy, "
+                    + (API.customRAMValue ? "custom RAM value" : "default 2048 MB") + ", -Xms" + xms + "M, " + (ccG1 ? "G1" : "ZGC") + ")");
+            userArgs.add("-Xms" + xms + "M");
+            userArgs.add("-Xmx" + ccXmx + "M");
+        } else if (API.customRAMValue) {
             Logger.getInstance().appendToLog("QuestCraft: Setting JVM memory to " + API.memoryValue + "MB (Custom)");
             userArgs.add("-Xms" + API.memoryValue + "M");
             userArgs.add("-Xmx" + API.memoryValue + "M");
@@ -221,9 +244,20 @@ public class JREUtils {
 
 
         // Garbage collection
-        userArgs.add("-XX:+UseZGC");
-        userArgs.add("-XX:+ZGenerational");
-        userArgs.add("-XX:-ZProactive");
+        if (ccG1) {
+            // claudecraft jvm.gc=g1: compressed oops, uncommits; never together with the ZGC flags
+            userArgs.add("-XX:+UseG1GC");
+            userArgs.add("-XX:MaxGCPauseMillis=25");
+            userArgs.add("-XX:G1PeriodicGCInterval=30000");
+        } else {
+            userArgs.add("-XX:+UseZGC");
+            userArgs.add("-XX:+ZGenerational");
+            userArgs.add("-XX:-ZProactive");
+            if (ccPolicy) {
+                userArgs.add("-XX:SoftMaxHeapSize=" + (ccXmx * 3 / 4) + "M");
+                userArgs.add("-XX:ZUncommitDelay=30");
+            }
+        }
         userArgs.add("-XX:+UnlockDiagnosticVMOptions");
         userArgs.add("-XX:-ImplicitNullChecks");
         userArgs.add("-XX:+DisableExplicitGC");
@@ -239,8 +273,18 @@ public class JREUtils {
         userArgs.add("-Dorg.lwjgl.opengles.libname=" + "/system/lib64/libGLESv3.so");
         userArgs.add("-Dorg.lwjgl.egl.libname=" + "/system/lib64/libEGL_dri.so");
 
+        // claudecraft (jvm.gcLog, jvm.extraArgs; PLAN 1l/1m). Extra args go last among the JVM options (they win);
+        // JVMArgs below starts with -cp and the main class, so anything after it would be a game argument.
+        if (ClaudecraftConfig.getBoolean(ClaudecraftConfig.JVM_GC_LOG)) {
+            userArgs.add("-Xlog:gc*:file=" + Constants.USER_HOME + "/gc.log:uptime,level,tags:filecount=3,filesize=10M");
+        }
+        userArgs.addAll(ClaudecraftConfig.getJvmExtraArgs());
+        Logger.getInstance().appendToLog("[claudecraft] JVM options (jvm.policy=" + ClaudecraftConfig.getString(ClaudecraftConfig.JVM_POLICY)
+                + (ccPolicy ? ", jvm.gc=" + ClaudecraftConfig.getString(ClaudecraftConfig.JVM_GC) : ", jvm.gc ignored") + "): " + userArgs);
+
         userArgs.addAll(JVMArgs);
-        System.out.println(JVMArgs);
+        // claudecraft (log.redactToken, PLAN 1n): JVMArgs carries "--accessToken <token>"; this line goes to logcat
+        System.out.println(ClaudecraftConfig.getBoolean(ClaudecraftConfig.LOG_REDACT_TOKEN) ? redactAccessToken(JVMArgs) : JVMArgs);
 
         runtimeDir = activity.getFilesDir() + "/runtimes/JRE";
 
@@ -248,9 +292,38 @@ public class JREUtils {
         chdir(instance.gameDir);
         userArgs.add(0,"java"); //argv[0] is the program name according to C standard.
 
-        int exitCode = VMLauncher.launchJVM(userArgs.toArray(new String[0]));
+        // claudecraft (unity.pauseInGame, PLAN 1o): pause Unity once the game is in VR; give it back if the JVM returns
+        ClaudecraftUnityPause.startWatcher(activity);
+        int exitCode;
+        try {
+            exitCode = VMLauncher.launchJVM(userArgs.toArray(new String[0]));
+        } finally {
+            ClaudecraftUnityPause.onGameEnded(activity);
+        }
         Logger.getInstance().appendToLog("Java Exit code: " + exitCode);
         return exitCode;
+    }
+
+    /** claudecraft: a copy of the game launch args with the value after --accessToken replaced. */
+    private static List<String> redactAccessToken(List<String> args) {
+        List<String> copy = new ArrayList<>(args);
+        for (int i = 0; i + 1 < copy.size(); i++) {
+            if ("--accessToken".equals(copy.get(i))) copy.set(i + 1, "<redacted>");
+        }
+        return copy;
+    }
+
+    /** claudecraft heap ceiling (MB): QuestCraft's custom RAM value when enabled and valid, else 2048. */
+    private static int claudecraftHeapMb() {
+        if (API.customRAMValue) {
+            try {
+                int mb = Integer.parseInt(String.valueOf(API.memoryValue).trim());
+                if (mb >= 512) return mb;
+            } catch (NumberFormatException ignored) {
+            }
+            Logger.getInstance().appendToLog("[claudecraft] Custom RAM value '" + API.memoryValue + "' is not a usable MB value; using 2048");
+        }
+        return 2048;
     }
 
     private static void writeDNS(Context ctx, File out) throws IOException {

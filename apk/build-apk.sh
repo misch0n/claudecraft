@@ -55,8 +55,14 @@ if [ "${#SOURCES[@]}" -gt 0 ]; then
   "$DEX2JAR" -f -o "$WORK/apk-classes.jar" "$APK" >/dev/null 2>&1 || true
   [ -s "$WORK/apk-classes.jar" ] || { echo "dex2jar produced no classpath jar" >&2; exit 1; }
   mkdir -p "$WORK/classes"
+  # android.jar has no java.lang.invoke.LambdaMetafactory, so javac stops on any lambda ("Fatal Error: Unable
+  # to find method metafactory", exit 3). The build-tools ship stubs for it (AGP adds the same jar); d8 desugars.
+  BOOTCP="$ANDROID_JAR"
+  LAMBDA_STUBS="$(ls "$ANDROID_HOME"/build-tools/*/core-lambda-stubs.jar 2>/dev/null | sort -V | tail -1 || true)"
+  [ -n "$LAMBDA_STUBS" ] && BOOTCP="$BOOTCP:$LAMBDA_STUBS"
+  echo "javac bootclasspath: $BOOTCP"
   javac -nowarn -Xlint:-options -source 8 -target 8 -encoding UTF-8 \
-    -bootclasspath "$ANDROID_JAR" -cp "$WORK/apk-classes.jar" -implicit:none \
+    -bootclasspath "$BOOTCP" -cp "$WORK/apk-classes.jar" -implicit:none \
     -d "$WORK/classes" "${SOURCES[@]}"
   mkdir -p "$WORK/patchdex"
   mapfile -t CLASSFILES < <(find "$WORK/classes" -name '*.class')
@@ -113,7 +119,7 @@ cp "$JAR" "$WORK/app/assets/claudecraft/Vivecraft.jar"
 {
   echo "build_tag=$TAG"
   echo "vivecraft_jar=$(basename "$JAR")"
-  echo "mc_version=$(unzip -p "$JAR" fabric.mod.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("depends",{}).get("minecraft",""))' 2>/dev/null || true)"
+  echo "mc_version=$(unzip -p "$JAR" fabric.mod.json | python3 -c 'import json,sys; m=json.load(sys.stdin).get("depends",{}).get("minecraft",""); print(",".join(m) if isinstance(m,list) else m)' 2>/dev/null || true)"
 } > "$WORK/app/assets/claudecraft/build.properties"
 
 # 4. Side-by-side variant: rename the package, authorities, app-defined permissions and the label.
