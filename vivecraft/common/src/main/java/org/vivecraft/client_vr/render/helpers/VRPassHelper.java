@@ -183,6 +183,9 @@ public class VRPassHelper {
         // frame; exactly one submit per frame either way
         boolean lateSubmit = org.vivecraft.client_vr.perf.PerfHooks.lateFrameWait;
         boolean submitted = false;
+        // claudecraft: xrSessionStateHandling, no eye images this frame (runtime said don't render, or the
+        // session is stopped): skip the eye passes, the empty frame is still submitted below
+        boolean eyesAvailable = DATA_HOLDER.vrRenderer.isEyeFrameAvailable();
         for (RenderPass renderpass : list) {
             DATA_HOLDER.currentPass = renderpass;
 
@@ -194,6 +197,9 @@ public class VRPassHelper {
                 {
                     continue;
                 }
+            }
+            if (!eyesAvailable && (renderpass == RenderPass.LEFT || renderpass == RenderPass.RIGHT)) {
+                continue;
             }
 
             switch (renderpass) {
