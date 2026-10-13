@@ -28,7 +28,8 @@ import javax.annotation.Nullable;
 @Mixin(GlTexture.class)
 public abstract class GlTextureVRMixin {
 
-    @WrapOperation(method = "flushModeChanges", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/opengl/GlStateManager;_texParameter(III)V"))
+    // GlStateManager is not obfuscated, so its name is the same at runtime, like the other blaze3d INVOKE targets
+    @WrapOperation(method = "flushModeChanges", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/opengl/GlStateManager;_texParameter(III)V", remap = false), remap = true)
     private void vivecraft$linearFilterAsFloat(int target, int pname, int param, Operation<Void> original) {
         if (param == GL11C.GL_LINEAR &&
             (pname == GL11C.GL_TEXTURE_MIN_FILTER || pname == GL11C.GL_TEXTURE_MAG_FILTER) &&
