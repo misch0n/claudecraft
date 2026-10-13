@@ -182,6 +182,9 @@ public class VRPassHelper {
         // it don't delay the frame; off, it submits after all passes like upstream. Exactly one submit per frame.
         boolean lateSubmit = org.vivecraft.client_vr.perf.PerfHooks.lateFrameWait;
         boolean submitted = false;
+        // claudecraft: xrSessionStateHandling, no eye images this frame (runtime said don't render, or the
+        // session is stopped): skip the eye passes, the empty frame is still submitted below
+        boolean eyesAvailable = DATA_HOLDER.vrRenderer.isEyeFrameAvailable();
         for (RenderPass renderpass : list) {
             // claudecraft: lazyAuxBuffers, a pass that got needed after setupRenderConfiguration still has its
             // placeholder target, skip it for this frame, the next setupRenderConfiguration gives it its real size
@@ -198,6 +201,9 @@ public class VRPassHelper {
                 {
                     continue;
                 }
+            }
+            if (!eyesAvailable && (renderpass == RenderPass.LEFT || renderpass == RenderPass.RIGHT)) {
+                continue;
             }
 
             switch (renderpass) {

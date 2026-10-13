@@ -163,6 +163,16 @@ public abstract class VRRenderer {
     public abstract void endFrame() throws RenderConfigException;
 
     /**
+     * claudecraft: xrSessionStateHandling, false when the runtime does not want this frame rendered and the eye
+     * render targets are not available; the LEFT/RIGHT passes are skipped then, endFrame() still runs
+     *
+     * @return if the LEFT/RIGHT passes should render this frame
+     */
+    public boolean isEyeFrameAvailable() {
+        return true;
+    }
+
+    /**
      * @return if this VRRenderer provides stencil for the left/right RenderPass
      */
     public abstract boolean providesStencilMask();

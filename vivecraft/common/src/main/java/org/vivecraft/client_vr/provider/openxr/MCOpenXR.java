@@ -88,6 +88,14 @@ public class MCOpenXR extends MCVR {
     private boolean startupRetry;
     private boolean loaderInitialized;
     private long startupDeadline;
+    // claudecraft: xrSessionStateHandling. sessionRunning: between a successful xrBeginSession and
+    // STOPPING/EXITING/LOSS_PENDING; frameBegun: xrBeginFrame succeeded this frame, so xrEndFrame is due.
+    // Both are kept up to date regardless of the toggle, and only read when it is on.
+    private static final long IDLE_SLEEP_MILLIS = 20L;
+    private static final long ERROR_LOG_INTERVAL_NANOS = 1_000_000_000L;
+    public boolean sessionRunning;
+    public boolean frameBegun;
+    private final Map<String, long[]> errorLogState = new HashMap<>();
 
 
     public MCOpenXR(Minecraft mc, ClientDataHolderVR dh) {
@@ -203,6 +211,13 @@ public class MCOpenXR extends MCVR {
         if (this.mc == null) {
             return;
         }
+        // claudecraft: xrSessionStateHandling, no frame calls (and no spinning) while the session is not running
+        this.frameBegun = false;
+        boolean stateHandling = this.dh.vrSettings.xrSessionStateHandling;
+        if (stateHandling && !this.sessionRunning) {
+            this.idleWithoutFrame();
+            return;
+        }
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             XrFrameState frameState = XrFrameState.calloc(stack).type(XR10.XR_TYPE_FRAME_STATE);
@@ -212,6 +227,11 @@ public class MCOpenXR extends MCVR {
                 XrFrameWaitInfo.calloc(stack).type(XR10.XR_TYPE_FRAME_WAIT_INFO),
                 frameState);
             logError(error, "xrWaitFrame", "");
+            // claudecraft: xrSessionStateHandling, a failed wait gives no frame to begin
+            if (stateHandling && error < 0) {
+                this.idleWithoutFrame();
+                return;
+            }
 
             this.time = frameState.predictedDisplayTime();
             this.shouldRender = frameState.shouldRender();
@@ -220,6 +240,7 @@ public class MCOpenXR extends MCVR {
                 this.session,
                 XrFrameBeginInfo.calloc(stack).type(XR10.XR_TYPE_FRAME_BEGIN_INFO));
             logError(error, "xrBeginFrame", "");
+            this.frameBegun = error >= 0; // claudecraft: xrSessionStateHandling
 
 
             XrViewState viewState = XrViewState.calloc(stack).type(XR10.XR_TYPE_VIEW_STATE);
@@ -351,6 +372,35 @@ public class MCOpenXR extends MCVR {
 
             this.updateAim();
         }
+    }
+
+    /**
+     * claudecraft: xrSessionStateHandling, a frame without xrWaitFrame: nothing is rendered or submitted, every
+     * binding is released (what the failing input reads used to produce), the last poses are kept, and the
+     * thread sleeps instead of spinning
+     */
+    private void idleWithoutFrame() {
+        this.shouldRender = false;
+        if (this.inputInitialized) {
+            for (VRInputAction action : this.inputActions.values()) {
+                for (VRInputAction.DigitalData data : action.digitalData) {
+                    data.state = false;
+                    data.isActive = false;
+                    data.isChanged = false;
+                }
+                for (VRInputAction.AnalogData data : action.analogData) {
+                    data.deltaX = -data.x;
+                    data.deltaY = -data.y;
+                    data.x = 0.0F;
+                    data.y = 0.0F;
+                    data.isActive = false;
+                    data.isChanged = false;
+                }
+            }
+        }
+        try {
+            Thread.sleep(IDLE_SLEEP_MILLIS);
+        } catch (InterruptedException ignored) {}
     }
 
     public void readNewData(VRInputAction action) {
@@ -527,6 +577,11 @@ public class MCOpenXR extends MCVR {
                 case XR10.XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING -> {
                     XrEventDataInstanceLossPending instanceLossPending = XrEventDataInstanceLossPending.create(
                         event.address());
+                    // claudecraft: xrSessionStateHandling, was silently ignored
+                    if (this.dh.vrSettings.xrSessionStateHandling) {
+                        VRSettings.LOGGER.warn("[VCPERF] OpenXR instance loss pending at {}",
+                            instanceLossPending.lossTime());
+                    }
                 }
                 case XR10.XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED -> {
                     this.sessionChanged(XrEventDataSessionStateChanged.create(event.address()));
@@ -558,6 +613,10 @@ public class MCOpenXR extends MCVR {
         if (state == XR10.XR_SESSION_STATE_READY || state == XR10.XR_SESSION_STATE_FOCUSED) {
             this.clearOriginCache();
         }
+        // claudecraft: xrSessionStateHandling, every transition in the log (headset off/on, system menu, ...)
+        if (this.dh.vrSettings.xrSessionStateHandling) {
+            VRSettings.LOGGER.info("[VCPERF] OpenXR session state {}", sessionStateName(state));
+        }
 
         switch (state) {
             case XR10.XR_SESSION_STATE_READY: {
@@ -569,12 +628,14 @@ public class MCOpenXR extends MCVR {
 
                     int error = XR10.xrBeginSession(this.session, sessionBeginInfo);
                     logError(error, "xrBeginSession", "XR_SESSION_STATE_READY");
+                    this.sessionRunning = error >= 0; // claudecraft: xrSessionStateHandling
                 }
                 this.isActive = true;
                 break;
             }
             case XR10.XR_SESSION_STATE_STOPPING: {
                 this.isActive = false;
+                this.sessionRunning = false; // claudecraft: xrSessionStateHandling
                 int error = XR10.xrEndSession(this.session);
                 logError(error, "xrEndSession", "XR_SESSION_STATE_STOPPING");
                 break;
@@ -584,6 +645,7 @@ public class MCOpenXR extends MCVR {
                 break;
             }
             case XR10.XR_SESSION_STATE_EXITING: {
+                this.sessionRunning = false; // claudecraft: xrSessionStateHandling
                 if (ClientDataHolderVR.getInstance().vrSettings.closeWithRuntime) {
                     VRSettings.LOGGER.info("Vivecraft: OpenXR stopped, closing the game with it");
                     this.mc.stop();
@@ -600,11 +662,41 @@ public class MCOpenXR extends MCVR {
                 break;
             }
             case XR10.XR_SESSION_STATE_LOSS_PENDING: {
+                // claudecraft: xrSessionStateHandling, the session is being lost: no more frame calls, and leave
+                // like on EXITING (closeWithRuntime: save and close the game) instead of running on blind
+                if (this.dh.vrSettings.xrSessionStateHandling) {
+                    this.sessionRunning = false;
+                    this.isActive = false;
+                    if (ClientDataHolderVR.getInstance().vrSettings.closeWithRuntime) {
+                        VRSettings.LOGGER.warn("Vivecraft: OpenXR session lost, closing the game with it");
+                        this.mc.stop();
+                    } else {
+                        VRSettings.LOGGER.warn("Vivecraft: OpenXR session lost, disabling VR");
+                        VRState.VR_ENABLED = false;
+                        ClientDataHolderVR.getInstance().vrSettings.vrEnabled = false;
+                        ClientDataHolderVR.getInstance().vrSettings.saveOptions();
+                    }
+                }
                 break;
             }
             default:
                 break;
         }
+    }
+
+    // claudecraft: xrSessionStateHandling, for the state log line
+    private static String sessionStateName(int state) {
+        return switch (state) {
+            case XR10.XR_SESSION_STATE_IDLE -> "IDLE";
+            case XR10.XR_SESSION_STATE_READY -> "READY";
+            case XR10.XR_SESSION_STATE_SYNCHRONIZED -> "SYNCHRONIZED";
+            case XR10.XR_SESSION_STATE_VISIBLE -> "VISIBLE";
+            case XR10.XR_SESSION_STATE_FOCUSED -> "FOCUSED";
+            case XR10.XR_SESSION_STATE_STOPPING -> "STOPPING";
+            case XR10.XR_SESSION_STATE_LOSS_PENDING -> "LOSS_PENDING";
+            case XR10.XR_SESSION_STATE_EXITING -> "EXITING";
+            default -> "UNKNOWN(" + state + ")";
+        };
     }
 
     @Override
@@ -1556,6 +1648,30 @@ public class MCOpenXR extends MCVR {
      */
     protected void logError(int xrResult, String caller, String... args) {
         if (xrResult < 0) {
+            // claudecraft: xrSessionStateHandling, the same error (caller and result) at most once per second, with
+            // the number of repeats left out. Also called from the haptics thread, hence the lock.
+            if (this.dh.vrSettings.xrSessionStateHandling) {
+                long repeats;
+                synchronized (this.errorLogState) {
+                    long now = System.nanoTime();
+                    long[] last = this.errorLogState.get(caller + ':' + xrResult);
+                    if (last == null) {
+                        last = new long[]{now, 0L};
+                        this.errorLogState.put(caller + ':' + xrResult, last);
+                    } else if (now - last[0] < ERROR_LOG_INTERVAL_NANOS) {
+                        last[1]++;
+                        return;
+                    }
+                    repeats = last[1];
+                    last[0] = now;
+                    last[1] = 0L;
+                }
+                if (repeats > 0L) {
+                    VRSettings.LOGGER.error("{} for {} errored: {} (and {} more times since the last report)", caller,
+                        String.join(" ", args), getResultName(xrResult), repeats);
+                    return;
+                }
+            }
             VRSettings.LOGGER.error("{} for {} errored: {}", caller, String.join(" ", args), getResultName(xrResult));
         }
     }
