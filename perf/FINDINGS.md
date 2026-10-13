@@ -92,6 +92,15 @@ plausible, but not re-checked line by line. **est** = estimate, unmeasured.
 - **M6. Identify the shipped jar.** Pull `mods/Vivecraft.jar` and compare its classes with local builds of
   `6d9b96af` and its neighbours. Record the result in `RESULTS.md`.
 - **M7.** Read the launcher log line `QuestCraft: Setting JVM memory to N MB` to learn which heap mode is in use.
+  The user has QuestCraft **6.0.0** (SideQuest). Its mod manifest is fetched live from Pojlib branch
+  `QuestCraft-6.0.0`, but the JVM flags and Unity code are compiled into the APK and may predate the branch
+  head read here. To confirm the real flags, have the M5 probe log
+  `ManagementFactory.getRuntimeMXBean().getInputArguments()` (JVM options only, no game arguments).
+- **M8. Privacy: `logcat` contains the Minecraft access token.** ✔ `Pojlib JREUtils.java:243` runs
+  `System.out.println(JVMArgs)`, and those arguments include `--accessToken`. `tools/logs.sh` must not save raw
+  `logcat` into anything that leaves the machine, or must redact `--accessToken <…>` first. Have the script grep
+  `latest.log` for the token too before sharing. It shouldn't be there, but this hasn't been verified.
+  `perf/runs/` is git-ignored regardless.
 
 ---
 
