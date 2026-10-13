@@ -88,6 +88,18 @@ public abstract class VRRenderer {
     // last error caused by this renderer
     protected String lastError = "";
 
+    // claudecraft: lazyAuxBuffers, as it was at the last reinit (off while shaders are active). While set, the
+    // camera, telescope, keyboard and radial targets are created at LAZY_AUX_SIZE and only get their real size the
+    // first time they are needed, and the mirror stays 1x1 while the mirror is off.
+    // 2x2 and not 1x1, so that mipmapped GUI targets still get one mip level.
+    private static final int LAZY_AUX_SIZE = 2;
+    private boolean lazyAux = false;
+    private boolean cameraAllocated = true;
+    private boolean telescopeLAllocated = true;
+    private boolean telescopeRAllocated = true;
+    private boolean keyboardAllocated = true;
+    private boolean radialAllocated = true;
+
     public VRRenderer(MCVR vr) {
         this.vr = vr;
     }
@@ -520,6 +532,11 @@ public abstract class VRRenderer {
             this.reinitFrameBuffers("gfx setting changed to: " + this.previousGraphics);
         }
 
+        // claudecraft: lazyAuxBuffers, give auxiliary targets their real size the first time they are needed
+        if (!this.reinitFrameBuffers && !this.resizeFrameBuffers) {
+            this.allocateLazyAuxBuffers(minecraft, dataholder);
+        }
+
         if (this.resizeFrameBuffers && !this.reinitFrameBuffers) {
             Tuple<Integer, Integer> tuple = this.getRenderTextureSizes();
             int eyew = tuple.getA();
@@ -556,21 +573,31 @@ public abstract class VRRenderer {
                 if (WorldRenderPass.MIXED_REALITY != null) {
                     WorldRenderPass.MIXED_REALITY.resize(mirrorSize.getA(), mirrorSize.getB());
                 }
-                this.mirrorFramebuffer.resize(
-                    ((WindowExtension) (Object) minecraft.getWindow()).vivecraft$getActualScreenWidth(),
-                    ((WindowExtension) (Object) minecraft.getWindow()).vivecraft$getActualScreenHeight());
+                // claudecraft: lazyAuxBuffers keeps the mirror at 1x1 while it is off
+                if (!this.isMirrorMinimal()) {
+                    this.mirrorFramebuffer.resize(
+                        ((WindowExtension) (Object) minecraft.getWindow()).vivecraft$getActualScreenWidth(),
+                        ((WindowExtension) (Object) minecraft.getWindow()).vivecraft$getActualScreenHeight());
+                }
             }
 
             // telescopes
-            WorldRenderPass.LEFT_TELESCOPE.resize(telescopeSize.getA(), telescopeSize.getB());
-            WorldRenderPass.RIGHT_TELESCOPE.resize(telescopeSize.getA(), telescopeSize.getB());
+            // claudecraft: lazyAuxBuffers, targets that were never needed keep their placeholder size
+            if (this.telescopeLAllocated) {
+                WorldRenderPass.LEFT_TELESCOPE.resize(telescopeSize.getA(), telescopeSize.getB());
+            }
+            if (this.telescopeRAllocated) {
+                WorldRenderPass.RIGHT_TELESCOPE.resize(telescopeSize.getA(), telescopeSize.getB());
+            }
 
             // camera
-            this.cameraFramebuffer.resize(cameraSize.getA(), cameraSize.getB());
-            if (ShadersHelper.needsSameSizeBuffers()) {
-                WorldRenderPass.CAMERA.resize(eyeFBWidth, eyeFBHeight);
-            } else {
-                WorldRenderPass.CAMERA.resize(cameraSize.getA(), cameraSize.getB());
+            if (this.cameraAllocated) {
+                this.cameraFramebuffer.resize(cameraSize.getA(), cameraSize.getB());
+                if (ShadersHelper.needsSameSizeBuffers()) {
+                    WorldRenderPass.CAMERA.resize(eyeFBWidth, eyeFBHeight);
+                } else {
+                    WorldRenderPass.CAMERA.resize(cameraSize.getA(), cameraSize.getB());
+                }
             }
 
             // resize gui, if changed
@@ -582,10 +609,15 @@ public abstract class VRRenderer {
                 GuiHandler.GUI_FRAMEBUFFER.resize(GuiHandler.GUI_WIDTH, GuiHandler.GUI_HEIGHT);
 
                 ((RenderTargetExtension) RadialHandler.FRAMEBUFFER).vivecraft$setMipmaps(mipmaps);
-                RadialHandler.FRAMEBUFFER.resize(GuiHandler.GUI_WIDTH, GuiHandler.GUI_HEIGHT);
+                // claudecraft: lazyAuxBuffers, a never shown radial/keyboard keeps its placeholder size
+                if (this.radialAllocated) {
+                    RadialHandler.FRAMEBUFFER.resize(GuiHandler.GUI_WIDTH, GuiHandler.GUI_HEIGHT);
+                }
 
                 ((RenderTargetExtension) KeyboardHandler.FRAMEBUFFER).vivecraft$setMipmaps(mipmaps);
-                KeyboardHandler.FRAMEBUFFER.resize(GuiHandler.GUI_WIDTH, GuiHandler.GUI_HEIGHT);
+                if (this.keyboardAllocated) {
+                    KeyboardHandler.FRAMEBUFFER.resize(GuiHandler.GUI_WIDTH, GuiHandler.GUI_HEIGHT);
+                }
                 if (minecraft.screen != null) {
                     int guiWidth = minecraft.getWindow().getGuiScaledWidth();
                     int guiHeight = minecraft.getWindow().getGuiScaledHeight();
@@ -664,6 +696,15 @@ public abstract class VRRenderer {
             int eyeFBWidth = (int) Math.ceil(eyew * this.renderScale);
             int eyeFBHeight = (int) Math.ceil(eyeh * this.renderScale);
 
+            // claudecraft: lazyAuxBuffers, decided per reinit. Not with shaders, they may size their own buffers
+            // from the pass targets when they are created.
+            this.lazyAux = dataholder.vrSettings.lazyAuxBuffers && !ShadersHelper.isShaderActive();
+            this.cameraAllocated = !this.lazyAux;
+            this.telescopeLAllocated = !this.lazyAux;
+            this.telescopeRAllocated = !this.lazyAux;
+            this.keyboardAllocated = !this.lazyAux;
+            this.radialAllocated = !this.lazyAux;
+
             this.framebufferVrRender = new VRTextureTarget("3D Render", eyeFBWidth, eyeFBHeight, true, -1, true, false,
                 dataholder.vrSettings.vrUseStencil && StencilHelper.stencilBufferSupported());
             WorldRenderPass.STEREO_XR = new WorldRenderPass(this.framebufferVrRender);
@@ -697,9 +738,11 @@ public abstract class VRRenderer {
                 VRSettings.LOGGER.info("Vivecraft: {}", this.framebufferUndistorted);
                 RenderHelper.checkGLError("Undistorted view framebuffer setup");
             }
-            this.mirrorFramebuffer = new VRTextureTarget("Mirror", Math.max(1,
+            // claudecraft: lazyAuxBuffers, nothing shows the mirror while it is off, keep it 1x1
+            boolean mirrorMinimal = this.isMirrorMinimal();
+            this.mirrorFramebuffer = new VRTextureTarget("Mirror", mirrorMinimal ? 1 : Math.max(1,
                 ((WindowExtension) (Object) minecraft.getWindow()).vivecraft$getActualScreenWidth()),
-                Math.max(1,
+                mirrorMinimal ? 1 : Math.max(1,
                     ((WindowExtension) (Object) minecraft.getWindow()).vivecraft$getActualScreenHeight()),
                 false, -1, false, false, false);
 
@@ -709,12 +752,16 @@ public abstract class VRRenderer {
             VRSettings.LOGGER.info("Vivecraft: {}", GuiHandler.GUI_FRAMEBUFFER);
             RenderHelper.checkGLError("GUI framebuffer setup");
 
-            KeyboardHandler.FRAMEBUFFER = new VRTextureTarget("Keyboard", GuiHandler.GUI_WIDTH, GuiHandler.GUI_HEIGHT,
+            KeyboardHandler.FRAMEBUFFER = new VRTextureTarget("Keyboard",
+                this.keyboardAllocated ? GuiHandler.GUI_WIDTH : LAZY_AUX_SIZE,
+                this.keyboardAllocated ? GuiHandler.GUI_HEIGHT : LAZY_AUX_SIZE,
                 true, -1, true, dataholder.vrSettings.guiMipmaps, false);
             VRSettings.LOGGER.info("Vivecraft: {}", KeyboardHandler.FRAMEBUFFER);
             RenderHelper.checkGLError("Keyboard framebuffer setup");
 
-            RadialHandler.FRAMEBUFFER = new VRTextureTarget("Radial Menu", GuiHandler.GUI_WIDTH, GuiHandler.GUI_HEIGHT,
+            RadialHandler.FRAMEBUFFER = new VRTextureTarget("Radial Menu",
+                this.radialAllocated ? GuiHandler.GUI_WIDTH : LAZY_AUX_SIZE,
+                this.radialAllocated ? GuiHandler.GUI_HEIGHT : LAZY_AUX_SIZE,
                 true, -1, true, dataholder.vrSettings.guiMipmaps, false);
             VRSettings.LOGGER.info("Vivecraft: {}", RadialHandler.FRAMEBUFFER);
             RenderHelper.checkGLError("Radial framebuffer setup");
@@ -722,7 +769,9 @@ public abstract class VRRenderer {
 
             Tuple<Integer, Integer> telescopeSize = getTelescopeTextureSize(eyeFBWidth, eyeFBHeight);
 
-            this.telescopeFramebufferR = new VRTextureTarget("TelescopeR", telescopeSize.getA(), telescopeSize.getB(),
+            this.telescopeFramebufferR = new VRTextureTarget("TelescopeR",
+                this.telescopeRAllocated ? telescopeSize.getA() : LAZY_AUX_SIZE,
+                this.telescopeRAllocated ? telescopeSize.getB() : LAZY_AUX_SIZE,
                 true, -1, false, false, false);
             WorldRenderPass.RIGHT_TELESCOPE = new WorldRenderPass(this.telescopeFramebufferR);
             VRSettings.LOGGER.info("Vivecraft: {}", this.telescopeFramebufferR);
@@ -732,7 +781,9 @@ public abstract class VRRenderer {
                     this.telescopeFramebufferR.getDepthTexture(), 1F);
             RenderHelper.checkGLError("TelescopeR framebuffer setup");
 
-            this.telescopeFramebufferL = new VRTextureTarget("TelescopeL", telescopeSize.getA(), telescopeSize.getB(),
+            this.telescopeFramebufferL = new VRTextureTarget("TelescopeL",
+                this.telescopeLAllocated ? telescopeSize.getA() : LAZY_AUX_SIZE,
+                this.telescopeLAllocated ? telescopeSize.getB() : LAZY_AUX_SIZE,
                 true, -1, false, false, false);
             WorldRenderPass.LEFT_TELESCOPE = new WorldRenderPass(this.telescopeFramebufferL);
             VRSettings.LOGGER.info("Vivecraft: {}", this.telescopeFramebufferL);
@@ -753,13 +804,17 @@ public abstract class VRRenderer {
                 cameraRenderFBheight = eyeFBHeight;
             }
 
-            this.cameraFramebuffer = new VRTextureTarget("Handheld Camera", cameraSize.getA(), cameraSize.getB(), true,
+            // claudecraft: lazyAuxBuffers, the camera copy's depth buffer is never used, so it is left out
+            this.cameraFramebuffer = new VRTextureTarget("Handheld Camera",
+                this.cameraAllocated ? cameraSize.getA() : LAZY_AUX_SIZE,
+                this.cameraAllocated ? cameraSize.getB() : LAZY_AUX_SIZE, !this.lazyAux,
                 -1, false, false, false);
             VRSettings.LOGGER.info("Vivecraft: {}", this.cameraFramebuffer);
 
             RenderHelper.checkGLError("Camera framebuffer setup");
-            this.cameraRenderFramebuffer = new VRTextureTarget("Handheld Camera Render", cameraRenderFBwidth,
-                cameraRenderFBheight, true, -1, true, false, false);
+            this.cameraRenderFramebuffer = new VRTextureTarget("Handheld Camera Render",
+                this.cameraAllocated ? cameraRenderFBwidth : LAZY_AUX_SIZE,
+                this.cameraAllocated ? cameraRenderFBheight : LAZY_AUX_SIZE, true, -1, true, false, false);
             WorldRenderPass.CAMERA = new WorldRenderPass(this.cameraRenderFramebuffer);
             VRSettings.LOGGER.info("Vivecraft: {}", this.cameraRenderFramebuffer);
             RenderHelper.checkGLError("Camera render framebuffer setup");
@@ -839,6 +894,110 @@ public abstract class VRRenderer {
 
             this.reinitFrameBuffers = false;
             this.resizeFrameBuffers = false;
+        }
+    }
+
+    /**
+     * claudecraft: lazyAuxBuffers
+     *
+     * @return if the mirror target is kept at 1x1, because nothing shows it
+     */
+    private boolean isMirrorMinimal() {
+        return this.lazyAux &&
+            ClientDataHolderVR.getInstance().vrSettings.displayMirrorMode == VRSettings.MirrorMode.OFF;
+    }
+
+    /**
+     * claudecraft: lazyAuxBuffers
+     *
+     * @param pass RenderPass to check
+     * @return false if the RenderTarget of {@code pass} still has its placeholder size, the pass should be skipped
+     * then, the next setupRenderConfiguration gives it its real size
+     */
+    public boolean isPassTargetAllocated(RenderPass pass) {
+        return switch (pass) {
+            case CAMERA -> this.cameraAllocated;
+            case SCOPEL -> this.telescopeLAllocated;
+            case SCOPER -> this.telescopeRAllocated;
+            default -> true;
+        };
+    }
+
+    /**
+     * claudecraft: lazyAuxBuffers, gives the camera and telescope targets their real size the first time their pass
+     * is rendered, then does the GUI targets. Called before any pass of the frame is rendered.
+     */
+    private void allocateLazyAuxBuffers(Minecraft minecraft, ClientDataHolderVR dataholder) {
+        if (!this.lazyAux || this.framebufferVrRender == null) return;
+
+        if (!this.cameraAllocated || !this.telescopeLAllocated || !this.telescopeRAllocated) {
+            int eyeFBWidth = this.framebufferVrRender.width;
+            int eyeFBHeight = this.framebufferVrRender.height;
+            List<RenderPass> passes = this.getRenderPasses(false);
+            boolean worldPassResized = false;
+
+            if (!this.cameraAllocated && passes.contains(RenderPass.CAMERA)) {
+                this.cameraAllocated = true;
+                Tuple<Integer, Integer> cameraSize = getCameraTextureSize(eyeFBWidth, eyeFBHeight);
+                this.cameraFramebuffer.resize(cameraSize.getA(), cameraSize.getB());
+                if (ShadersHelper.needsSameSizeBuffers()) {
+                    WorldRenderPass.CAMERA.resize(eyeFBWidth, eyeFBHeight);
+                } else {
+                    WorldRenderPass.CAMERA.resize(cameraSize.getA(), cameraSize.getB());
+                }
+                VRSettings.LOGGER.info("Vivecraft: lazy aux buffers: allocated {}{}", this.cameraFramebuffer,
+                    this.cameraRenderFramebuffer);
+                worldPassResized = true;
+            }
+
+            Tuple<Integer, Integer> telescopeSize = getTelescopeTextureSize(eyeFBWidth, eyeFBHeight);
+            if (!this.telescopeRAllocated && passes.contains(RenderPass.SCOPER)) {
+                this.telescopeRAllocated = true;
+                WorldRenderPass.RIGHT_TELESCOPE.resize(telescopeSize.getA(), telescopeSize.getB());
+                // same initial content as when created
+                RenderSystem.getDevice().createCommandEncoder()
+                    .clearColorAndDepthTextures(this.telescopeFramebufferR.getColorTexture(),
+                        ARGB.color(0, 0, 0, 255), this.telescopeFramebufferR.getDepthTexture(), 1F);
+                VRSettings.LOGGER.info("Vivecraft: lazy aux buffers: allocated {}", this.telescopeFramebufferR);
+                worldPassResized = true;
+            }
+            if (!this.telescopeLAllocated && passes.contains(RenderPass.SCOPEL)) {
+                this.telescopeLAllocated = true;
+                WorldRenderPass.LEFT_TELESCOPE.resize(telescopeSize.getA(), telescopeSize.getB());
+                RenderSystem.getDevice().createCommandEncoder()
+                    .clearColorAndDepthTextures(this.telescopeFramebufferL.getColorTexture(),
+                        ARGB.color(0, 0, 0, 255), this.telescopeFramebufferL.getDepthTexture(), 1F);
+                VRSettings.LOGGER.info("Vivecraft: lazy aux buffers: allocated {}", this.telescopeFramebufferL);
+                worldPassResized = true;
+            }
+
+            if (worldPassResized) {
+                // same as the resize path, so per pass buffers like the entity outline follow the new pass sizes
+                minecraft.resizeDisplay();
+            }
+        }
+
+        this.allocateLazyGuiBuffers();
+    }
+
+    /**
+     * claudecraft: lazyAuxBuffers, gives the keyboard and radial menu targets their real size the first time they are
+     * shown. They are no world pass targets, so this is safe to call at any point of the frame.
+     */
+    public void allocateLazyGuiBuffers() {
+        if (!this.lazyAux) return;
+
+        if (!this.keyboardAllocated && KeyboardHandler.FRAMEBUFFER != null && KeyboardHandler.SHOWING &&
+            !ClientDataHolderVR.getInstance().vrSettings.physicalKeyboard)
+        {
+            this.keyboardAllocated = true;
+            KeyboardHandler.FRAMEBUFFER.resize(GuiHandler.GUI_WIDTH, GuiHandler.GUI_HEIGHT);
+            VRSettings.LOGGER.info("Vivecraft: lazy aux buffers: allocated {}", KeyboardHandler.FRAMEBUFFER);
+        }
+        if (!this.radialAllocated && RadialHandler.FRAMEBUFFER != null && RadialHandler.isShowing()) {
+            this.radialAllocated = true;
+            RadialHandler.FRAMEBUFFER.resize(GuiHandler.GUI_WIDTH, GuiHandler.GUI_HEIGHT);
+            VRSettings.LOGGER.info("Vivecraft: lazy aux buffers: allocated {}", RadialHandler.FRAMEBUFFER);
         }
     }
 
