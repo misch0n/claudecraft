@@ -1,6 +1,7 @@
 # Raw device captures stay local: latest.log contains the Minecraft username and device paths,
 # and this repo is public. Only perf/RESULTS.md (summaries) is committed.
 runs/
+backups/
 
 # CLAUDE.md: never commit Minecraft/Mojang code or jars.
 *.jar

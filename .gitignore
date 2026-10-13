@@ -1,0 +1,4 @@
+# Build outputs and downloads that must never be committed (see CLAUDE.md)
+*.apk
+*.idsig
+/questcraft-claudecraft-*
