@@ -216,8 +216,12 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
             // switch vr in the menu, or when allowed by the server
             vivecraft$switchVRState(vrActive);
         }
+        // claudecraft: xrLateFrameWait, latched for the whole frame
+        org.vivecraft.client_vr.perf.PerfHooks.lateFrameWait = ClientDataHolderVR.getInstance().vrSettings.xrLateFrameWait;
         if (VRState.VR_RUNNING) {
-            ClientDataHolderVR.getInstance().frameIndex++;
+            if (!org.vivecraft.client_vr.perf.PerfHooks.lateFrameWait) {
+                ClientDataHolderVR.getInstance().frameIndex++;
+            }
             RenderPassManager.setGUIRenderPass();
             // reset camera position, if there is one, since it only gets set at the start of rendering, and the last renderpass can be anywhere
             if (this.gameRenderer != null && this.gameRenderer.getMainCamera() != null && this.level != null &&
@@ -228,10 +232,13 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
                         this.deltaTracker.getGameTimeDeltaPartialTick(true));
             }
 
-            Profiler.get().push("VR Poll/VSync");
-            ClientDataHolderVR.getInstance().vr.poll(ClientDataHolderVR.getInstance().frameIndex);
-            Profiler.get().pop();
-            ClientDataHolderVR.getInstance().vrPlayer.postPoll();
+            // claudecraft: with xrLateFrameWait the poll (xrWaitFrame) happens at "render", after the ticks
+            if (!org.vivecraft.client_vr.perf.PerfHooks.lateFrameWait) {
+                Profiler.get().push("VR Poll/VSync");
+                ClientDataHolderVR.getInstance().vr.poll(ClientDataHolderVR.getInstance().frameIndex);
+                Profiler.get().pop();
+                ClientDataHolderVR.getInstance().vrPlayer.postPoll();
+            }
         }
     }
 
@@ -262,6 +269,14 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
     @Inject(method = "runTick", at = @At(value = "CONSTANT", args = "stringValue=render"))
     private void vivecraft$preRender(CallbackInfo ci) {
         if (VRState.VR_RUNNING) {
+            // claudecraft: xrLateFrameWait, wait for the VR frame after the ticks, right before rendering (upstream c4f3315)
+            if (org.vivecraft.client_vr.perf.PerfHooks.lateFrameWait) {
+                ClientDataHolderVR.getInstance().frameIndex++;
+                Profiler.get().push("VR Poll/VSync");
+                ClientDataHolderVR.getInstance().vr.poll(ClientDataHolderVR.getInstance().frameIndex);
+                Profiler.get().pop();
+                ClientDataHolderVR.getInstance().vrPlayer.postPoll();
+            }
             Profiler.get().push("preRender");
             ClientDataHolderVR.getInstance().vrPlayer.preRender(this.deltaTracker.getGameTimeDeltaPartialTick(true));
             VRHotkeys.updateMovingThirdPersonCam();
