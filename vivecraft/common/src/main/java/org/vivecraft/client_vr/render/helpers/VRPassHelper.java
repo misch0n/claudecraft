@@ -179,6 +179,13 @@ public class VRPassHelper {
         // render the different vr passes
         List<RenderPass> list = DATA_HOLDER.vrRenderer.getRenderPasses(false);
         DATA_HOLDER.isFirstPass = true;
+        // claudecraft: xrLateFrameWait submits right after the RIGHT eye, so the passes after it don't delay the
+        // frame; exactly one submit per frame either way
+        boolean lateSubmit = org.vivecraft.client_vr.perf.PerfHooks.lateFrameWait;
+        boolean submitted = false;
+        // claudecraft: xrSessionStateHandling, no eye images this frame (runtime said don't render, or the
+        // session is stopped): skip the eye passes, the empty frame is still submitted below
+        boolean eyesAvailable = DATA_HOLDER.vrRenderer.isEyeFrameAvailable();
         for (RenderPass renderpass : list) {
             DATA_HOLDER.currentPass = renderpass;
 
@@ -190,6 +197,9 @@ public class VRPassHelper {
                 {
                     continue;
                 }
+            }
+            if (!eyesAvailable && (renderpass == RenderPass.LEFT || renderpass == RenderPass.RIGHT)) {
+                continue;
             }
 
             switch (renderpass) {
@@ -234,11 +244,25 @@ public class VRPassHelper {
             }
 
             DATA_HOLDER.isFirstPass = false;
+
+            if (lateSubmit && renderpass == RenderPass.RIGHT) {
+                submitFrame();
+                submitted = true;
+            }
         }
         // now we are done with rendering
         Profiler.get().pop();
 
         DATA_HOLDER.vrPlayer.postRender(deltaTracker.getGameTimeDeltaPartialTick(true));
+        if (!submitted) {
+            submitFrame();
+        }
+    }
+
+    /**
+     * claudecraft: the original end-of-frame submit, moved here unchanged so both xrLateFrameWait modes share it
+     */
+    private static void submitFrame() {
         Profiler.get().push("Display/Reproject");
 
         try {
