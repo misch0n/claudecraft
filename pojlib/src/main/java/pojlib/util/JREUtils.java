@@ -99,6 +99,9 @@ public class JREUtils {
     public static void redirectAndPrintJRELog() {
         Log.v("jrelog","Log starts here");
         JREUtils.logToLogger(Logger.getInstance());
+        // claudecraft (log.keepLogcat, PLAN 1n): don't wipe the system log (it holds the previous crash);
+        // read only new lines instead, so the launcher log still starts fresh.
+        final boolean keepLogcat = ClaudecraftConfig.getBoolean(ClaudecraftConfig.LOG_KEEP_LOGCAT);
         new Thread(new Runnable(){
             int failTime = 0;
             ProcessBuilder logcatPb;
@@ -106,10 +109,16 @@ public class JREUtils {
             public void run() {
                 try {
                     if (logcatPb == null) {
-                        logcatPb = new ProcessBuilder().command("logcat", "-v", "brief", "-s", "jrelog:I", "LIBGL:I").redirectErrorStream(true);
+                        logcatPb = keepLogcat
+                                ? new ProcessBuilder().command("logcat", "-v", "brief", "-T", "1", "-s", "jrelog:I", "LIBGL:I").redirectErrorStream(true)
+                                : new ProcessBuilder().command("logcat", "-v", "brief", "-s", "jrelog:I", "LIBGL:I").redirectErrorStream(true);
                     }
-                            Log.i("jrelog-logcat","Clearing logcat");
-                    new ProcessBuilder().command("logcat", "-c").redirectErrorStream(true).start();
+                    if (keepLogcat) {
+                        Log.i("jrelog-logcat","Not clearing logcat (claudecraft log.keepLogcat)");
+                    } else {
+                        Log.i("jrelog-logcat","Clearing logcat");
+                        new ProcessBuilder().command("logcat", "-c").redirectErrorStream(true).start();
+                    }
                     Log.i("jrelog-logcat","Starting logcat");
                     java.lang.Process p = logcatPb.start();
 
@@ -271,7 +280,8 @@ public class JREUtils {
                 + (ccPolicy ? ", jvm.gc=" + ClaudecraftConfig.getString(ClaudecraftConfig.JVM_GC) : ", jvm.gc ignored") + "): " + userArgs);
 
         userArgs.addAll(JVMArgs);
-        System.out.println(JVMArgs);
+        // claudecraft (log.redactToken, PLAN 1n): JVMArgs carries "--accessToken <token>"; this line goes to logcat
+        System.out.println(ClaudecraftConfig.getBoolean(ClaudecraftConfig.LOG_REDACT_TOKEN) ? redactAccessToken(JVMArgs) : JVMArgs);
 
         runtimeDir = activity.getFilesDir() + "/runtimes/JRE";
 
@@ -282,6 +292,15 @@ public class JREUtils {
         int exitCode = VMLauncher.launchJVM(userArgs.toArray(new String[0]));
         Logger.getInstance().appendToLog("Java Exit code: " + exitCode);
         return exitCode;
+    }
+
+    /** claudecraft: a copy of the game launch args with the value after --accessToken replaced. */
+    private static List<String> redactAccessToken(List<String> args) {
+        List<String> copy = new ArrayList<>(args);
+        for (int i = 0; i + 1 < copy.size(); i++) {
+            if ("--accessToken".equals(copy.get(i))) copy.set(i + 1, "<redacted>");
+        }
+        return copy;
     }
 
     /** claudecraft heap ceiling (MB): QuestCraft's custom RAM value when enabled and valid, else 2048. */

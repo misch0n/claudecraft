@@ -1,7 +1,5 @@
 package pojlib.util;
 
-import androidx.annotation.Keep;
-
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -10,7 +8,8 @@ import java.lang.ref.WeakReference;
 /** Singleton class made to log on one file
  * The singleton part can be removed but will require more implementation from the end-dev
  */
-@Keep
+// claudecraft: androidx @Keep removed. It only guides R8 when the AAR is built, has no runtime effect, and
+// would make this patch depend on androidx being in the APK's classpath.
 public class Logger {
 
     /* Instance variables */
@@ -26,12 +25,28 @@ public class Logger {
     private Logger(String fileName){
         mLogFile = new File(Constants.USER_HOME, fileName);
         // Make a new instance of the log file
+        // claudecraft (log.keepPrevious, PLAN 1n): keep the previous run's log (often the crashed one)
+        File kept = keepPreviousLog(fileName);
         mLogFile.delete();
         try {
             mLogFile.createNewFile();
             mLogStream = new PrintStream(mLogFile.getAbsolutePath());
         }catch (IOException e){e.printStackTrace();}
+        if (kept != null && mLogStream != null) appendToLog("[claudecraft] previous launcher log kept as " + kept.getName());
+    }
 
+    /** Renames the existing log to name.prev.txt (replacing an older one) when log.keepPrevious is on.
+     *  Uses ClaudecraftConfig.peekBoolean, which never calls back into the Logger. */
+    private File keepPreviousLog(String fileName) {
+        try {
+            if (!mLogFile.isFile() || !ClaudecraftConfig.peekBoolean(ClaudecraftConfig.LOG_KEEP_PREVIOUS)) return null;
+            String prevName = fileName.endsWith(".txt") ? fileName.substring(0, fileName.length() - 4) + ".prev.txt" : fileName + ".prev";
+            File prev = new File(mLogFile.getParentFile(), prevName);
+            prev.delete();
+            return mLogFile.renameTo(prev) ? prev : null;
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     private static final class SLoggerSingletonHolder {
