@@ -142,6 +142,13 @@ public class VRSettings {
         AFTER_SHADER
     }
 
+    public enum XrRefreshRate implements OptionEnum<XrRefreshRate> {
+        MAX,
+        HZ72,
+        HZ90,
+        HZ120
+    }
+
     public enum VRProvider implements OptionEnum<VRProvider> {
         OPENVR,
         OPENXR,
@@ -602,6 +609,38 @@ public class VRSettings {
     @SettingField(VrOptions.MONO_FOV)
     @Deprecated
     public float monoFOV;
+
+    // claudecraft: performance and stability toggles; defaults and findings are listed in PLAN.md
+    @SettingField(VrOptions.PERF_MEMORY_LOG)
+    public boolean perfMemoryLog = true;
+    @SettingField(VrOptions.FREE_MENU_WORLD_IN_GAME)
+    public boolean freeMenuWorldInGame = true;
+    @SettingField(VrOptions.MENU_WORLD_STREAM_LOAD)
+    public boolean menuWorldStreamLoad = true;
+    @SettingField(VrOptions.SHARE_OUTLINE_TARGETS)
+    public boolean shareOutlineTargets = true;
+    @SettingField(VrOptions.LAZY_AUX_BUFFERS)
+    public boolean lazyAuxBuffers = true;
+    @SettingField(VrOptions.FIX_SUPPORTER_LEAK)
+    public boolean fixSupporterLeak = true;
+    @SettingField(VrOptions.CLEAR_TRACKER_REFS)
+    public boolean clearTrackerRefs = true;
+    @SettingField(VrOptions.XR_STARTUP_RETRY)
+    public boolean xrStartupRetry = true;
+    @SettingField(VrOptions.XR_SESSION_STATE_HANDLING)
+    public boolean xrSessionStateHandling = true;
+    @SettingField(VrOptions.XR_LATE_FRAME_WAIT)
+    public boolean xrLateFrameWait = true;
+    @SettingField(VrOptions.XR_REFRESH_RATE)
+    public XrRefreshRate xrRefreshRate = XrRefreshRate.HZ90;
+    @SettingField(VrOptions.CACHE_INPUT_ORIGINS)
+    public boolean cacheInputOrigins = true;
+    @SettingField(VrOptions.GL_ERROR_CHECKS)
+    public boolean glErrorChecks = false;
+    @SettingField(VrOptions.LTW_LINEAR_FILTER_FIX)
+    public boolean ltwLinearFilterFix = true;
+    @SettingField(VrOptions.XR_PERF_HINTS)
+    public boolean xrPerfHints = false;
     //
 
     public ServerOverrides overrides = new ServerOverrides();
@@ -2077,7 +2116,28 @@ public class VRSettings {
         },
         INGAME_BINDINGS_IN_GUI(false, true),
         RADIAL_NUMBER(false, false, 4, 14, 2, 0),
-        RIGHT_CLICK_DELAY(false, false); // Right Click Repeat
+        RIGHT_CLICK_DELAY(false, false), // Right Click Repeat
+        // claudecraft: performance and stability (see PLAN.md)
+        PERF_MEMORY_LOG(false, true),
+        FREE_MENU_WORLD_IN_GAME(false, true),
+        MENU_WORLD_STREAM_LOAD(false, true),
+        SHARE_OUTLINE_TARGETS(false, true),
+        LAZY_AUX_BUFFERS(false, true),
+        FIX_SUPPORTER_LEAK(false, true),
+        CLEAR_TRACKER_REFS(false, true),
+        XR_STARTUP_RETRY(false, true),
+        XR_SESSION_STATE_HANDLING(false, true),
+        XR_LATE_FRAME_WAIT(false, true),
+        XR_REFRESH_RATE(false, false) {
+            @Override
+            void onOptionChange() {
+                org.vivecraft.client_vr.perf.PerfHooks.onRefreshRateChanged();
+            }
+        },
+        CACHE_INPUT_ORIGINS(false, true),
+        GL_ERROR_CHECKS(false, true),
+        LTW_LINEAR_FILTER_FIX(false, true),
+        XR_PERF_HINTS(false, true);
 
         private final boolean enumFloat;
         private final boolean enumBoolean;
