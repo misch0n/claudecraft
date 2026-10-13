@@ -48,14 +48,22 @@ Same routine as step 2, with `PKG=com.qcxr.qcxr.claudecraft` in front of each co
 1. Start Minecraft from QuestCraft CC. Title screen: `PKG=com.qcxr.qcxr.claudecraft tools/mem.sh title`.
 2. Join the world: `load` at ~10 s, `settled` at 60 s, `walk` after 2 min of walking.
 3. Play 15–20 minutes: `long`.
-4. Note anything that looks different or wrong:
+4. Our launcher writes `files/claudecraft.properties` (every launcher switch, with comments) and logs what it
+   did in `files/latestlog.txt`:
+   - `Setting JVM memory to 2048MB (claudecraft policy ...)`;
+   - `installed bundled Vivecraft 1.2.5-mihail.1`;
+   - about 10 s after VR starts, `Unity player paused`.
+
+   If the game misbehaves about 10 s after VR starts, set `unity.pauseInGame=false` in that file and
+   tell me.
+5. Note anything that looks different or wrong:
    - menus, keyboard, spyglass, camera;
    - smoothness;
    - whether the world view looks sharper or blurrier;
    - whether the GUI panels look smooth or pixelated.
-5. Quit to the title screen and wait 10 s (the menu world should come back). Join again once
+6. Quit to the title screen and wait 10 s (the menu world should come back). Join again once
    (checks unload/reload).
-6. `PKG=com.qcxr.qcxr.claudecraft tools/logs.sh`
+7. `PKG=com.qcxr.qcxr.claudecraft tools/logs.sh`
 
 ## 5. If you have time: one A/B (10 min)
 
