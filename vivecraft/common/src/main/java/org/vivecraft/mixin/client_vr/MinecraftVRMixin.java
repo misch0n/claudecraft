@@ -277,9 +277,9 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
 
             try {
                 Profiler.get().push("setupRenderConfiguration");
-                RenderHelper.checkGLError("pre render setup");
+                RenderHelper.checkGLErrorFrame("pre render setup");
                 ClientDataHolderVR.getInstance().vrRenderer.setupRenderConfiguration(true);
-                RenderHelper.checkGLError("post render setup");
+                RenderHelper.checkGLErrorFrame("post render setup");
             } catch (Exception e) {
                 // something went wrong, disable VR
                 vivecraft$switchVRState(false);
@@ -316,7 +316,7 @@ public abstract class MinecraftVRMixin implements MinecraftExtension {
             Profiler.get().popPush("vrMirror");
             RenderPassManager.setMirrorRenderPass();
             ShaderHelper.drawMirror();
-            RenderHelper.checkGLError("post-mirror");
+            RenderHelper.checkGLErrorFrame("post-mirror");
             original.call(this.mainRenderTarget);
             RenderPassManager.setGUIRenderPass();
         } else {
