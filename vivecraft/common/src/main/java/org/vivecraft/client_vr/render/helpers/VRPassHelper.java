@@ -43,7 +43,7 @@ public class VRPassHelper {
         // THIS IS WHERE EVERYTHING IS RENDERED
         MC.gameRenderer.render(deltaTracker, renderLevel);
 
-        RenderHelper.checkGLError("post game render " + eye);
+        RenderHelper.checkGLErrorFrame("post game render " + eye);
 
         if (DATA_HOLDER.currentPass == RenderPass.LEFT || DATA_HOLDER.currentPass == RenderPass.RIGHT) {
             // copies the rendered scene to eye tex with fsaa and other postprocessing effects.
@@ -56,7 +56,7 @@ public class VRPassHelper {
                     DATA_HOLDER.vrRenderer.fsaaFirstPassResultFBO,
                     DATA_HOLDER.vrRenderer.fsaaLastPassResultFBO);
                 rendertarget = DATA_HOLDER.vrRenderer.fsaaLastPassResultFBO;
-                RenderHelper.checkGLError("fsaa " + eye);
+                RenderHelper.checkGLErrorFrame("fsaa " + eye);
                 Profiler.get().pop();
             }
 
@@ -65,7 +65,7 @@ public class VRPassHelper {
                 eye == RenderPass.LEFT ? DATA_HOLDER.vrRenderer.getLeftEyeTarget() :
                     DATA_HOLDER.vrRenderer.getRightEyeTarget(), deltaTracker.getGameTimeDeltaPartialTick(false));
 
-            RenderHelper.checkGLError("post overlay" + eye);
+            RenderHelper.checkGLErrorFrame("post overlay" + eye);
             Profiler.get().pop();
         }
 
@@ -87,10 +87,10 @@ public class VRPassHelper {
             // copy optifine depth buffer, since we need it for the mixed reality split
             RenderSystem.activeTexture(GL13C.GL_TEXTURE0);
             RenderSystem.bindTexture(DATA_HOLDER.vrRenderer.framebufferMR.getDepthTextureId());
-            RenderHelper.checkGLError("pre copy depth");
+            RenderHelper.checkGLErrorFrame("pre copy depth");
             GlStateManager._glCopyTexSubImage2D(GL13C.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
                 DATA_HOLDER.vrRenderer.framebufferMR.width, DATA_HOLDER.vrRenderer.framebufferMR.height);
-            RenderHelper.checkGLError("post copy depth");
+            RenderHelper.checkGLErrorFrame("post copy depth");
             // rebind the original buffer
             DATA_HOLDER.vrRenderer.framebufferMR.bindWrite(false);
         }
@@ -171,7 +171,7 @@ public class VRPassHelper {
             RenderHelper.drawScreen(guiGraphics, deltaTracker, RadialHandler.UI, true);
         }
         Profiler.get().pop();
-        RenderHelper.checkGLError("post 2d ");
+        RenderHelper.checkGLErrorFrame("post 2d ");
 
         // done with guis
         Profiler.get().pop();
@@ -247,6 +247,6 @@ public class VRPassHelper {
             VRSettings.LOGGER.error("Vivecraft: error ending frame: {}", exception.error.getString());
         }
         Profiler.get().pop();
-        RenderHelper.checkGLError("post submit");
+        RenderHelper.checkGLErrorFrame("post submit");
     }
 }
