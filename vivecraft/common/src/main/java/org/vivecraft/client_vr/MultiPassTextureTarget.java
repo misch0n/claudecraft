@@ -30,13 +30,38 @@ public class MultiPassTextureTarget extends TextureTarget {
     @Nullable
     private final EnumMap<RenderPass, TextureTarget> vrTargets;
 
-    private final TextureTarget vanilla;
+    // claudecraft: not final, with shareOutlineTargets it is only created on first use
+    private TextureTarget vanilla;
+
+    // claudecraft: shareOutlineTargets. Read once, VRRenderer recreates this target on every framebuffer reinit.
+    // When set, LEFT and RIGHT share one target (both render to WorldRenderPass.STEREO_XR), and targets are only
+    // created once something glows in that pass, until then a 1x1 placeholder takes vanilla's per frame clear.
+    private final boolean shared;
+    private final String name;
+    private final boolean useDepthBuffer;
+    private int vanillaWidth;
+    private int vanillaHeight;
+    @Nullable
+    private TextureTarget placeholder;
+    // claudecraft: result of the last LevelRenderer#collectVisibleEntities, true when a visible entity glows
+    private static boolean GLOWING = false;
 
     public MultiPassTextureTarget(String name, int width, int height, boolean useDepth) {
         super(name, width, height, useDepth);
         super.destroyBuffers();
 
         this.vrTargets = new EnumMap<>(RenderPass.class);
+
+        // claudecraft: lazy and shared targets
+        this.shared = ClientDataHolderVR.getInstance().vrSettings.shareOutlineTargets;
+        this.name = name;
+        this.useDepthBuffer = useDepth;
+        this.vanillaWidth = width;
+        this.vanillaHeight = height;
+        if (this.shared) {
+            // nothing allocated yet, getCurrent creates targets when they are needed
+            return;
+        }
 
         this.isVanilla = true;
         this.vanilla = new TextureTarget(name, width, height, useDepth);
@@ -61,9 +86,14 @@ public class MultiPassTextureTarget extends TextureTarget {
         }
 
         // resize all targets to their main counterpart
-        this.isVanilla = true;
-        this.vanilla.resize(width, height);
-        this.isVanilla = false;
+        this.vanillaWidth = width;
+        this.vanillaHeight = height;
+        // claudecraft: vanilla is null until first use with shareOutlineTargets
+        if (this.vanilla != null) {
+            this.isVanilla = true;
+            this.vanilla.resize(width, height);
+            this.isVanilla = false;
+        }
         for (Map.Entry<RenderPass, TextureTarget> entry : this.vrTargets.entrySet()) {
             WorldRenderPass pass = WorldRenderPass.getByRenderPass(entry.getKey());
             if (pass != null) {
@@ -126,6 +156,13 @@ public class MultiPassTextureTarget extends TextureTarget {
             super.blitAndBlendToTexture(gpuTexture);
             return;
         }
+        // claudecraft: the placeholder only ever holds vanilla's clear, blending it would change nothing
+        if (this.shared) {
+            TextureTarget current = getCurrent(true);
+            if (current != null && current == this.placeholder) {
+                return;
+            }
+        }
         callOnTarget(r -> r.blitAndBlendToTexture(gpuTexture));
     }
 
@@ -134,7 +171,8 @@ public class MultiPassTextureTarget extends TextureTarget {
         if (this.vrTargets == null) {
             return super.getColorTexture();
         }
-        return callOnTargetRet(RenderTarget::getColorTexture);
+        // claudecraft: texture getters are what vanilla's per frame clear uses, they may get the placeholder
+        return callOnTargetTexture(RenderTarget::getColorTexture);
     }
 
     @Override
@@ -142,17 +180,23 @@ public class MultiPassTextureTarget extends TextureTarget {
         if (this.vrTargets == null) {
             return super.getDepthTexture();
         }
-        return callOnTargetRet(RenderTarget::getDepthTexture);
+        return callOnTargetTexture(RenderTarget::getDepthTexture);
     }
 
     private void callOnAllTargets(Consumer<TextureTarget> consumer) {
-        this.isVanilla = true;
-        consumer.accept(this.vanilla);
-        this.isVanilla = false;
+        // claudecraft: vanilla is null until first use with shareOutlineTargets
+        if (this.vanilla != null) {
+            this.isVanilla = true;
+            consumer.accept(this.vanilla);
+            this.isVanilla = false;
+        }
         for (Map.Entry<RenderPass, TextureTarget> entry : this.vrTargets.entrySet()) {
             this.passOverride = entry.getKey();
             consumer.accept(entry.getValue());
             this.passOverride = null;
+        }
+        if (this.placeholder != null) {
+            consumer.accept(this.placeholder);
         }
     }
 
@@ -172,16 +216,83 @@ public class MultiPassTextureTarget extends TextureTarget {
         return function.apply(current);
     }
 
+    // claudecraft: like callOnTargetRet, but may hand out the placeholder (see getCurrent(boolean))
+    private <T> T callOnTargetTexture(Function<TextureTarget, T> function) {
+        TextureTarget current = getCurrent(true);
+        if (current != this.last) {
+            setLast(current);
+        }
+        return function.apply(current);
+    }
+
     /**
      * @return the TextureTarget that should be rendered to now
      */
     private TextureTarget getCurrent() {
+        return getCurrent(false);
+    }
+
+    /**
+     * @param allowPlaceholder if a target that doesn't exist yet may be substituted by the 1x1 placeholder while
+     *                         nothing glows, only used with shareOutlineTargets
+     * @return the TextureTarget that should be rendered to now
+     */
+    private TextureTarget getCurrent(boolean allowPlaceholder) {
         if (this.isVanilla || RenderPassType.isVanilla()) {
+            if (this.vanilla == null) {
+                // claudecraft: only with shareOutlineTargets, create on first use
+                if (allowPlaceholder && !GLOWING) {
+                    return getPlaceholder();
+                }
+                this.vanilla = new TextureTarget(this.name, this.vanillaWidth, this.vanillaHeight,
+                    this.useDepthBuffer);
+            }
             return this.vanilla;
         } else {
-            return this.vrTargets.get(
-                this.passOverride != null ? this.passOverride : ClientDataHolderVR.getInstance().currentPass);
+            RenderPass pass =
+                this.passOverride != null ? this.passOverride : ClientDataHolderVR.getInstance().currentPass;
+            if (!this.shared) {
+                return this.vrTargets.get(pass);
+            }
+            // claudecraft: LEFT and RIGHT both render to WorldRenderPass.STEREO_XR, so they can share one target,
+            // each eye clears, draws, post processes and blends it before the next eye starts
+            RenderPass key = pass == RenderPass.RIGHT ? RenderPass.LEFT : pass;
+            TextureTarget target = key == null ? null : this.vrTargets.get(key);
+            if (target == null && key != null) {
+                WorldRenderPass worldPass = WorldRenderPass.getByRenderPass(key);
+                if (worldPass == null) {
+                    // same as without sharing, there is no target for passes without a world pass
+                    return null;
+                }
+                if (allowPlaceholder && !GLOWING) {
+                    return getPlaceholder();
+                }
+                target = new TextureTarget(this.name + " " + key, worldPass.target.width, worldPass.target.height,
+                    this.useDepthBuffer);
+                this.vrTargets.put(key, target);
+            }
+            return target;
         }
+    }
+
+    /**
+     * claudecraft: 1x1 target that takes vanilla's per frame clear of the outline target while nothing glows
+     */
+    private TextureTarget getPlaceholder() {
+        if (this.placeholder == null) {
+            this.placeholder = new TextureTarget(this.name + " placeholder", 1, 1, this.useDepthBuffer);
+        }
+        return this.placeholder;
+    }
+
+    /**
+     * claudecraft: called with the result of LevelRenderer#collectVisibleEntities, which runs before the outline
+     * target is cleared, drawn to and blended for the current pass
+     *
+     * @param glowing if any visible entity glows in the current pass
+     */
+    public static void setGlowing(boolean glowing) {
+        GLOWING = glowing;
     }
 
     /**

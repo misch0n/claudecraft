@@ -1,6 +1,7 @@
 package org.vivecraft.mixin.client_vr.renderer;
 
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+import com.llamalad7.mixinextras.injector.ModifyReturnValue;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
@@ -147,6 +148,13 @@ public abstract class LevelRendererVRMixin implements ResourceManagerReloadListe
     private boolean vivecraft$noPlayerWhenSleeping(boolean isSleeping) {
         // no self render, we don't want an out-of-body experience
         return isSleeping && RenderPassType.isVanilla();
+    }
+
+    // claudecraft: shareOutlineTargets, the outline target of a pass is only allocated once something glows in it
+    @ModifyReturnValue(method = "collectVisibleEntities", at = @At("RETURN"))
+    private boolean vivecraft$trackGlowingEntities(boolean hasGlowingEntities) {
+        MultiPassTextureTarget.setGlowing(hasGlowingEntities);
+        return hasGlowingEntities;
     }
 
     @Inject(method = "renderEntity", at = @At("HEAD"))
