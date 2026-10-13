@@ -96,6 +96,12 @@ public class MCOpenXR extends MCVR {
     public boolean sessionRunning;
     public boolean frameBegun;
     private final Map<String, long[]> errorLogState = new HashMap<>();
+    // claudecraft: xrPerfHints. The LWJGL build has no class for XR_KHR_android_thread_settings, so its name,
+    // enum value and function are spelled out here (from the OpenXR 1.0 spec)
+    private static final String XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME = "XR_KHR_android_thread_settings";
+    private static final int XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR = 3;
+    private boolean perfHintsRequested;
+    private boolean threadSettingsEnabled;
 
 
     public MCOpenXR(Minecraft mc, ClientDataHolderVR dh) {
@@ -601,6 +607,14 @@ public class MCOpenXR extends MCVR {
                     VRSettings.LOGGER.info("[VCPERF] refresh rate changed from {} to {} Hz",
                         changed.fromDisplayRefreshRate(), changed.toDisplayRefreshRate());
                 }
+                case EXTPerformanceSettings.XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT -> {
+                    // claudecraft: xrPerfHints, CPU/GPU throttling notifications (only sent with the extension)
+                    XrEventDataPerfSettingsEXT perf = XrEventDataPerfSettingsEXT.create(event.address());
+                    VRSettings.LOGGER.info(
+                        "[VCPERF] xr perf notification domain={} subDomain={} from={} to={} (domain 1=CPU 2=GPU; " +
+                            "subDomain 1=compositing 2=rendering 3=thermal; level 0=normal 25=warning 75=impaired)",
+                        perf.domain(), perf.subDomain(), perf.fromLevel(), perf.toLevel());
+                }
                 default -> {
                 }
             }
@@ -842,7 +856,11 @@ public class MCOpenXR extends MCVR {
             // get needed extensions
             String graphicsExtension = this.device.getGraphicsExtension();
             boolean missingGraphics = true;
-            PointerBuffer extensions = stack.callocPointer(5);
+            // claudecraft: xrPerfHints, room for its two extensions (the 5 above were already a full buffer)
+            PointerBuffer extensions = stack.callocPointer(7);
+            // claudecraft: xrPerfHints, only when the toggle is on at VR init
+            this.perfHintsRequested = this.dh.vrSettings.xrPerfHints;
+            this.threadSettingsEnabled = false;
             while (properties.hasRemaining()) {
                 XrExtensionProperties prop = properties.get();
                 String extensionName = prop.extensionNameString();
@@ -867,6 +885,15 @@ public class MCOpenXR extends MCVR {
                 }
                 if (extensionName.equals(BDControllerInteraction.XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME)) {
                     extensions.put(memAddress(stackUTF8(BDControllerInteraction.XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME)));
+                }
+                if (this.perfHintsRequested &&
+                    extensionName.equals(EXTPerformanceSettings.XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME))
+                {
+                    extensions.put(memAddress(stackUTF8(EXTPerformanceSettings.XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME)));
+                }
+                if (this.perfHintsRequested && extensionName.equals(XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME)) {
+                    extensions.put(memAddress(stackUTF8(XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME)));
+                    this.threadSettingsEnabled = true;
                 }
             }
 
@@ -1207,6 +1234,58 @@ public class MCOpenXR extends MCVR {
         //this.installApplicationManifest(false);
         this.inputInitialized = true;
         initDisplayRefreshRate();
+        this.applyPerfHints(); // claudecraft: xrPerfHints
+    }
+
+    /**
+     * claudecraft: xrPerfHints, when its extensions were enabled at instance creation: marks the calling thread
+     * (the render thread, which runs init) as the renderer main thread, and asks for sustained high CPU and GPU
+     * levels. Logs what was applied.
+     */
+    private void applyPerfHints() {
+        if (!this.perfHintsRequested) {
+            return;
+        }
+        String thread = "not offered";
+        if (this.threadSettingsEnabled) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                // "/proc/thread-self" links to "<pid>/task/<tid>"
+                String self = java.nio.file.Files.readSymbolicLink(java.nio.file.Path.of("/proc/thread-self"))
+                    .toString();
+                int tid = Integer.parseInt(self.substring(self.lastIndexOf('/') + 1));
+                PointerBuffer function = stack.callocPointer(1);
+                int error = XR10.xrGetInstanceProcAddr(this.instance, "xrSetAndroidApplicationThreadKHR", function);
+                logError(error, "xrGetInstanceProcAddr", "xrSetAndroidApplicationThreadKHR");
+                if (error >= 0 && function.get(0) != NULL) {
+                    // XrResult xrSetAndroidApplicationThreadKHR(XrSession, XrAndroidThreadTypeKHR, uint32_t threadId)
+                    error = org.lwjgl.system.JNI.callPI(this.session.address(),
+                        XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR, tid, function.get(0));
+                    logError(error, "xrSetAndroidApplicationThreadKHR", "renderer main " + tid);
+                    thread = "rendererMain tid=" + tid + " result=" + error;
+                } else {
+                    thread = "function missing";
+                }
+            } catch (java.io.IOException | RuntimeException e) {
+                thread = "failed: " + e;
+            }
+        }
+
+        String levels = "not offered";
+        if (this.instance.getCapabilities().XR_EXT_performance_settings) {
+            int cpu = EXTPerformanceSettings.xrPerfSettingsSetPerformanceLevelEXT(this.session,
+                EXTPerformanceSettings.XR_PERF_SETTINGS_DOMAIN_CPU_EXT,
+                EXTPerformanceSettings.XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT);
+            logError(cpu, "xrPerfSettingsSetPerformanceLevelEXT", "CPU");
+            int gpu = EXTPerformanceSettings.xrPerfSettingsSetPerformanceLevelEXT(this.session,
+                EXTPerformanceSettings.XR_PERF_SETTINGS_DOMAIN_GPU_EXT,
+                EXTPerformanceSettings.XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT);
+            logError(gpu, "xrPerfSettingsSetPerformanceLevelEXT", "GPU");
+            levels = "sustainedHigh cpuResult=" + cpu + " gpuResult=" + gpu;
+        }
+
+        VRSettings.LOGGER.info("[VCPERF] xr perf hints: thread [{}] levels [{}]", thread, levels);
+        org.vivecraft.client_vr.perf.PerfProbe.put("xrPerfHintsThread", thread);
+        org.vivecraft.client_vr.perf.PerfProbe.put("xrPerfHintsLevels", levels);
     }
 
     @Override
