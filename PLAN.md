@@ -1,108 +1,130 @@
 # PLAN.md — work plan
 
-Phases run in order. Within a phase, each task is its own branch, toggle and `perf/RESULTS.md`
-entry. Stop and report to the user at every **⏸ checkpoint**.
+Phases run in order. Each task gets its own `perf/<task>` branch, toggle and `perf/RESULTS.md` entry.
+Headset builds come from `integration/<tag>` branches that merge the task branches, so one build can
+A/B every toggle. Stop and report to the user at every **⏸ checkpoint**. The evidence for each task is
+in `perf/FINDINGS.md` (IDs like V1, Q1 and M5 refer to it).
 
 ---
 
-## Phase 0 — Setup and baseline (no code changes)
+## Phase 0 — Setup, pipeline, baseline
 
-1. **Find the Minecraft version on the headset.** Use adb to list the QuestCraft instance folder
-   and the jar names in its `mods/`. Record the Minecraft version, the exact Vivecraft jar
-   filename, and the Sodium version actually shipped (later Mixins target that exact Sodium).
-2. **Check out the matching branch** (`OpenXR-<mcversion>`) as `main`. Add remotes:
-   - `qc` → `https://github.com/QuestCraftPlusPlus/VivecraftMod`
-   - `upstream` → `https://github.com/Vivecraft/VivecraftMod` (its `openxr` branch is newer; cherry-pick only)
-3. **Build unmodified** with the tag `-mihail.0`. Write the `tools/` scripts (see `CLAUDE.md`).
-4. **Prove jar replacement works:** deploy `mihail.0`; the user launches; confirm the tag appears
-   in `latest.log`. Add the `[VCPERF]` config log line in this build.
-5. **Baseline run** with the measurement protocol. Also run once with the menu world **disabled in
-   VR Settings** (existing option, zero code); the difference sizes Task 1b.
+1. ✅ Repo layout. `vivecraft/` is imported from release commit `6d9b96af` and `pojlib/` from
+   `QuestCraft-6.0.0` (see CLAUDE.md).
+2. ✅ CI on GitHub Actions: Vivecraft jar → patched QuestCraft APK (replace and side variants). The
+   container cannot reach the build hosts.
+3. **Confirm the base commit.** CI compares our `mihail.0` jar with the release jar class by class. If
+   many classes differ, build the neighbouring commits (`97b4cf8`, `bdaefe97`, `532f26e3`) and pick the
+   closest one.
+4. **Device scripts** in `tools/` (CLAUDE.md "Device loop"). First is `forensics.sh`, because the crash
+   history is already on the headset.
+5. **Forensics before any play.** Pull `exit-info` and the dropbox crash entries. Classify past crashes:
+   memory kill vs native crash vs timing (FINDINGS M9).
+6. **Baseline with the official app, no code** (FINDINGS section 3):
+   - the GC log via `custom_env.txt` (`JAVA_TOOL_OPTIONS=-Xlog:gc*:file=…`);
+   - meminfo snapshots and `top -H`;
+   - menu world on and off;
+   - heap mode: read `Setting JVM memory` in `latestlog.txt`.
 
-⏸ **Checkpoint:** report the version, paths, baseline numbers, and the meminfo breakdown (Java
-Heap vs Native vs Graphics). If Graphics or Native dominates by far, tell the user before
-continuing; it may re-rank the phases.
-
----
-
-## Phase 1 — Quick wins (small, low risk)
-
-### 1a. Refresh-rate setting
-- Today `MCOpenXR.initDisplayRefreshRate()` requests the **highest** enumerated rate (120 Hz on 3S).
-- Add the setting `xrRefreshRate`: `MAX` (current behaviour), `72`, `90`, `120`. Request the
-  chosen rate only if the runtime enumerates it, else fall back to `MAX`. Apply on change without
-  a restart if possible (`xrRequestDisplayRefreshRateFB` works mid-session).
-- Log the rate actually in effect (`xrGetDisplayRefreshRateFB`) in the `[VCPERF]` line.
-- **Default: 90.** This is the one deliberate default change; keep `MAX` selectable.
-- **Measure:** frame-time consistency (p95, dropped frames) at 90 vs 120, plus thermals over 10 min.
-
-### 1b. Free the menu world during gameplay
-- `MenuWorldRenderer` buffers and its `FakeBlockAccess` (full block, light and biome arrays) stay
-  resident in-game; `destroy()` frees buffers but keeps `blockAccess`.
-- Setting `freeMenuWorldInGame` (default **on**): on level join call `completeDestroy()` and drop
-  `blockAccess` and any other large references. Rebuild via the normal `init()`/`prepare()` path
-  when returning to the title screen. Make sure the builder threads are cancelled first.
-- **Measure:** `settled` and `walk` meminfo vs Phase 0 baseline and vs the "menu world disabled" run.
-
-### 1c. Lazy auxiliary framebuffers
-- `VRRenderer.setupRenderConfiguration` always allocates: two 720² spyglass targets with depth,
-  1920×1080 hand-camera + camera-render targets with depth, GUI-size keyboard and radial-menu
-  targets with depth + mipmaps, and a mirror target.
-- Setting `lazyAuxBuffers` (default **on**): allocate spyglass, camera, keyboard and radial
-  targets on first use; free them after N seconds unused. Trace every reader for null-safety,
-  including `resize` paths and `WorldRenderPass` statics. Size the mirror target to 1×1 when the
-  mirror is not shown.
-- **Measure:** Graphics row of meminfo. Expect tens of MB, not GBs; report the honest number.
-
-⏸ **Checkpoint:** results table for 1a–1c. Merge whatever measurably helped.
+⏸ **Checkpoint:** crash classification, baseline numbers, heap mode, and whether Unity threads use CPU
+while Minecraft runs.
 
 ---
 
-## Phase 2 — Shared culling across both eyes (the main CPU win)
+## Phase 1 — Stability and memory (first sideload build, `mihail.1`)
 
-**Problem:** each eye runs the full world render. `SodiumWorldRendererVRMixin` forces Sodium to
-rebuild its chunk visibility graph on **every pass**, so the occlusion search, entity and
-block-entity collection and particle setup all run twice per frame for cameras ~6 cm apart.
+All of these ship in one build, each behind its own toggle.
 
-**Design**
-1. On the first stereo pass of a frame, build a **cull camera** whose frustum encloses both eye
-   frusta: midpoint of the eyes, horizontal FOV = union of left and right eye angles, apex moved
-   back so both eye apexes are inside. (Conservative: may draw slightly more, never less.)
-2. Run Sodium's graph update once with that camera; on the second eye **skip** the update and
-   reuse the render lists. Replace the "always dirty" Mixin with "dirty on first pass only" under
-   a setting `sharedEyeCulling` (default **off** until validated).
-3. Leave per-eye draw submission alone (that part genuinely differs per eye).
-4. Optional second step, separately toggled: reuse the visible entity / block-entity lists for the
-   second eye, filtered by the combined frustum.
+**Vivecraft** (`VRSettings`, on the "Performance and stability" page):
 
-**Validation (all required)**
-- No missing or flickering chunks at the edges of either eye: test fast head turns, looking down
-  cliffs, and standing next to walls (worst case for occlusion from the midpoint).
-- CPU frame time down on OVR Metrics, no GPU regression.
-- Pin the Mixin targets to the Sodium version recorded in Phase 0; use `expect`/`require` so a
-  Sodium update fails loudly rather than silently.
+| Task | Toggle | Default | Finding |
+|---|---|---|---|
+| 1a `[VCPERF]` config line + periodic memory lines (heap, metaspace, code cache, direct, RSS; JVM args) | `perfMemoryLog` | on | M5, M7 |
+| 1b Free the menu world when a world is joined, rebuild on the title screen; no menu-world loading/building while a world exists | `freeMenuWorldInGame` | on | V1 |
+| 1c Stream-decode the menu world file (no two full copies) | `menuWorldStreamLoad` | on | V1 |
+| 1d Entity-outline targets shared by both eyes and created on first use | `shareOutlineTargets` | on | V2 |
+| 1e Lazy auxiliary targets (camera, telescopes, keyboard), 1×1 mirror when the mirror is off | `lazyAuxBuffers` | on | V3 |
+| 1f Supporter download: never keep `Player` objects; time out; fail cleanly | `fixSupporterLeak` | on | V4 |
+| 1g Clear trackers' entity references on disconnect | `clearTrackerRefs` | on | V5 |
+| 1h OpenXR startup: retry instance/session creation with a bounded wait instead of one fixed sleep | `xrStartupRetry` | on | V12b |
+| 1i Honour `shouldRender`; idle instead of spinning when the session is not running | `xrSessionStateHandling` | on | V12 |
 
-**Desktop pre-check:** before headset testing, run on the Mac with the `nullvr` provider to verify
-nothing crashes and to compare pass timings with the Minecraft profiler. The desktop GL path
-differs from the headset's GL ES path, so trust only CPU-side conclusions from it.
+**Launcher** (keys in `claudecraft.properties`; the patched launcher writes the file with defaults on
+first run):
 
-⏸ **Checkpoint:** before/after table, and a list of any visual artifacts the user saw.
+| Task | Key | Default | Finding |
+|---|---|---|---|
+| 1j Heap policy: `-Xmx` = the custom RAM value if set, else 2048 MB; `-Xms512M`; ZGC `SoftMaxHeapSize` = 75% of `-Xmx`; `ZUncommitDelay=30` | `jvm.policy=claudecraft` | on | Q1, Q2 |
+| 1k GC selectable (`zgc` / `g1`) for A/B | `jvm.gc` | `zgc` | Q1 |
+| 1l GC log to `gc.log` (rotated) | `jvm.gcLog` | on | M2 |
+| 1m Extra JVM args appended last | `jvm.extraArgs` | empty | — |
+| 1n Keep the previous launcher log, don't wipe logcat, redact the access token | `log.keepPrevious`, `log.keepLogcat`, `log.redactToken` | on | M8, M9 |
+| 1o Pause the Unity player once the game is up, and keep it paused across resume | `unity.pauseInGame` | on | Q4 |
+| 1p Install the bundled Vivecraft jar into the instance at each launch | `vivecraft.installBundled` | on | — |
+
+**Measure:** the protocol in CLAUDE.md, comparing the official app (baseline) with `mihail.1` defaults,
+then single toggles off. The key numbers are crashes per hour, the `long` snapshot, the TOTAL peak at VR
+start, and Allocation Stalls during join.
+
+⏸ **Checkpoint:** results table for 1a–1p. Merge what measurably helped. Report any toggle whose "on"
+caused a problem.
 
 ---
 
-## Phase 3 — Research items (only after Phases 1–2; propose before implementing)
+## Phase 2 — Smoothness (same build where possible)
 
-- **Render directly into the swapchain** when no post effects are active (no vignette, FOV
-  reduction, water/portal overlay), skipping the per-eye full-screen copy. On a tile-based GPU
-  this also saves a resolve per eye. Also a prerequisite for fixed foveated rendering to affect
-  world rendering at all.
-- **Submit depth** (`XR_KHR_composition_layer_depth`) for better reprojection; then assess
-  **Application SpaceWarp** (`XR_FB_space_warp`) feasibility under GL ES and the translation layer.
-  Report feasibility only.
-- **Allocation profiling:** Java Flight Recorder on the Mac with `nullvr`, to find per-frame
-  allocation hot spots in Vivecraft's render path (garbage → collection pauses → stutter).
-- **Launcher-side (separate repo, `Pojlib`):** Java runtime flags (GC choice, metaspace and
-  direct-memory caps, heap uncommit). Out of scope for this repo; write a recommendation with data.
+| Task | Toggle | Default | Finding |
+|---|---|---|---|
+| 2a Frame timing: `xrWaitFrame` after the game tick, submit right after the right eye (backport of upstream `c4f3315`) | `xrLateFrameWait` | on | V6 |
+| 2b Refresh rate setting: MAX, 72, 90, 120. Request only if enumerated, apply live, log the actual rate | `xrRefreshRate` | 90 | V7 |
+| 2c Cache OpenXR bound sources per action; refresh on interaction-profile change | `cacheInputOrigins` | on | V8 |
+| 2d `glGetError` checks only when debugging | `glErrorChecks` | off | V9, L4 |
+| 2e Linear filtering for Vivecraft's own quads despite LTW's LINEAR→NEAREST remap | `ltwLinearFilterFix` | on | L3 |
+| 2f XR thread hint (`XR_KHR_android_thread_settings`) and CPU/GPU level hint (`XR_EXT_performance_settings`) | `xrPerfHints` | off | V13 |
+
+**Measure:** frame-time median and p95, stale frames, CPU level, thermals over 20 min at 90 vs 120 Hz.
+
+⏸ **Checkpoint:** results table; decide the defaults for the next build.
+
+---
+
+## Phase 3 — Shared culling across both eyes (main CPU win; design corrected)
+
+Today Sodium redoes visibility for each eye *because the eye cameras differ*. The "always dirty" mixin
+is a symptom, and removing it alone saves nothing (FINDINGS V11).
+
+1. Build one **union frustum** for both eyes: HMD orientation, origin moved back
+   `d = (IPD/2) / tan(min outer half-FOV)` (≈3 cm), and an off-centre projection from the per-side max
+   tangents of both `XrFovf`. Feed it to Sodium's viewport and to vanilla entity culling for both eyes.
+2. On the RIGHT pass of the same frame, skip Sodium's `markGraphDirty`/`update`, GFNI movement,
+   `updateChunks`, `uploadChunks` and `tickVisibleRenders` (for example with `@WrapWithCondition`).
+   Fall back to per-eye culling when the eyes are in different sections.
+3. Optionally reuse the LEFT eye's visible-entity list for the RIGHT eye, and compute weather columns once.
+4. Toggle `sharedEyeCulling`, default **off** until validated. Pin the Mixin targets to Sodium 0.6.13
+   with `require` so a Sodium update fails loudly.
+
+**Validation:** no missing or flickering chunks at either eye's edges (fast head turns, cliffs, walls),
+CPU frame time down, no GPU regression. Desktop pre-check with `nullvr` and the profiler (trust only the
+CPU side).
+
+⏸ **Checkpoint:** before/after table and the visual artifacts the user saw.
+
+---
+
+## Phase 4 — Research (propose before implementing)
+
+- **Multiview (single-pass stereo)** is the only way to stop submitting every draw twice. It needs every
+  vanilla and Sodium shader to use `gl_ViewID_OVR`, array targets, and an LTW bypass for those shaders
+  (FINDINGS R1, L1). Ask the QuestCraft developers why the March 2025 attempt was dropped.
+- **Render directly into the swapchain** when no post effect is active, plus `glInvalidateFramebuffer`
+  on depth (V15).
+- **Depth submission and space warp** feasibility under GL ES and LTW.
+- **GC choice from data:** ZGC vs G1 using the `jvm.gc` toggle and the GC logs (Q1).
+- **Unity:** `unload()` instead of `pause()` once the game is up (frees Unity's memory; risky because the
+  JVM runs on a Unity-created thread). The microphone loop needs a Unity rebuild; meanwhile the user can
+  revoke the microphone permission.
+- **ModernFix for 1.21.5:** check whether a compatible release exists, and measure it.
+- **Upstream cherry-picks:** menu world load speed-up (upstream `62535ff0`).
 
 ## Reporting format (every checkpoint)
 
