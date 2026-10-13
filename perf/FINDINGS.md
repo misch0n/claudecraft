@@ -238,6 +238,19 @@ plausible, but not re-checked line by line. **est** = estimate, unmeasured.
 - **Fix:** track the session state; when not running, skip passes and sleep; honour `shouldRender`;
   rate-limit `logError`.
 
+**V12b. The Unity → Vivecraft XR hand-off is timed by a fixed sleep (suspect for intermittent launch crashes).** ✔ code; crash link is a hypothesis.
+- **Vivecraft side:** VR starts on the first tick after Minecraft's initial resource load
+  (`ResourceLoadStateTrackerMixin:27-40`, `MinecraftVRMixin:198`). `DeviceCompat.initOpenXRLoader` sets Unity's
+  `gameReady` flag, sleeps a fixed 2.5 s, then creates its own OpenXR loader, instance and session.
+- **Unity side:** Unity reacts in `InstanceButton.Update()` with a 1 s fade plus a 200 ms delay before
+  `DeinitializeLoader()`. A busy device (post-load GC, render targets being allocated, menu-world decode
+  starting) can eat the ~1.3 s margin.
+- **The same moment is also the memory peak:** Unity's XR session, Minecraft's post-load heap, ~185 MB of new
+  render targets and the menu world's 2× decode.
+- **Fix:** replace the sleep with an explicit handshake (wait until Unity reports XR deinitialised, with a timeout).
+- **Measure:** logcat timestamps around VR init. Check whether launch crashes show the memory-limit message
+  (points to the memory peak) or not (points to the race).
+
 **V13. No thread or performance hints are sent to the runtime.** ✔ The extension list (`MCOpenXR.java:636-662`)
 lacks `XR_KHR_android_thread_settings` and `XR_EXT_performance_settings`.
 - **Cost of leaving it:** unknown. Meta's scheduler may not treat the JVM render thread as the app's main
@@ -275,6 +288,13 @@ Unity APK, so for us they are recommendations backed by data (PLAN Phase 3), plu
     This needs a Pojlib change; `JAVA_TOOL_OPTIONS` cannot switch the GC.
 - **Q2. Heap size depends on launch-time conditions.** ✔ In auto mode `-Xmx` depends on free RAM at launch, so
   runs aren't comparable and the heap can grow past what the device can afford. Measure with a fixed custom value.
+  - **The "1.8 GB heap" in CLAUDE.md is probably not what runs.** ✔ The Unity launcher's custom-RAM setting is
+    off by default, and its default value is 2048 (`ConfigHandler.cs:41-42`). Pojlib's `1800` only applies when
+    custom RAM is on but no value was passed.
+  - With custom RAM off (the default), `-Xmx = max(0.8 × (free RAM at launch − threshold), 1536 MB)`, so plausibly
+    2.5–3 GB (est). ZGC grows the heap toward that maximum and only uncommits above `-Xms` after 5 minutes idle.
+  - The launcher log `files/latestlog.txt` line `QuestCraft: Setting JVM memory to N MB` (plus "(Custom)") says
+    which applies.
 - **Q3. `-XX:-ImplicitNullChecks` adds explicit null checks to all JIT code.** ✔ That is a CPU cost of unknown
   size. It is probably a workaround for Android signal handling. Investigate only.
 - **Q4. Unity keeps running beside the game** (fact 6). If M3 shows Unity threads busy:
