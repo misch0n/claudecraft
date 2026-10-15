@@ -54,11 +54,11 @@ public final class PerfProbe {
             return;
         }
         VRSettings.LOGGER.info(
-            "[VCPERF] config reason={} build={} perfMemoryLog={} freeMenuWorldInGame={} menuWorldStreamLoad={} " +
+            "[VCPERF] config reason={} build={} perfMemoryLog={} freeMenuWorldInGame={} " +
                 "shareOutlineTargets={} lazyAuxBuffers={} fixSupporterLeak={} clearTrackerRefs={} " +
                 "xrStartupRetry={} xrSessionStateHandling={} xrLateFrameWait={} xrRefreshRate={} " +
                 "cacheInputOrigins={} glErrorChecks={} ltwLinearFilterFix={} xrPerfHints={} menuWorldSelection={} {}",
-            reason, Xloader.getModVersion(), s.perfMemoryLog, s.freeMenuWorldInGame, s.menuWorldStreamLoad,
+            reason, Xloader.getModVersion(), s.perfMemoryLog, s.freeMenuWorldInGame,
             s.shareOutlineTargets, s.lazyAuxBuffers, s.fixSupporterLeak, s.clearTrackerRefs,
             s.xrStartupRetry, s.xrSessionStateHandling, s.xrLateFrameWait, s.xrRefreshRate,
             s.cacheInputOrigins, s.glErrorChecks, s.ltwLinearFilterFix, s.xrPerfHints, s.menuWorldSelection,

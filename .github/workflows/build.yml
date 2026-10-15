@@ -125,7 +125,7 @@ jobs:
         run: |
           printf 'onboardAccessibility:false\nrenderDistance:4\nsimulationDistance:5\npauseOnLostFocus:false\nnarrator:0\ntutorialStep:none\nskipMultiplayerWarning:true\nsoundCategory_master:0.0\n' > options.txt
           if [ "${{ matrix.variant }}" = fixes-off ]; then
-            off='"freeMenuWorldInGame":"false","menuWorldStreamLoad":"false","shareOutlineTargets":"false","lazyAuxBuffers":"false","fixSupporterLeak":"false","clearTrackerRefs":"false","xrStartupRetry":"false","xrSessionStateHandling":"false","xrLateFrameWait":"false","cacheInputOrigins":"false","glErrorChecks":"true","ltwLinearFilterFix":"false","xrRefreshRate":"MAX",'
+            off='"freeMenuWorldInGame":"false","shareOutlineTargets":"false","lazyAuxBuffers":"false","fixSupporterLeak":"false","clearTrackerRefs":"false","xrStartupRetry":"false","xrSessionStateHandling":"false","xrLateFrameWait":"false","cacheInputOrigins":"false","glErrorChecks":"true","ltwLinearFilterFix":"false","xrRefreshRate":"MAX",'
           else
             off=''
           fi

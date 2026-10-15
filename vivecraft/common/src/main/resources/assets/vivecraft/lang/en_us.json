@@ -1015,8 +1015,6 @@
   "vivecraft.options.PERF_MEMORY_LOG.tooltip": "Writes [VCPERF] lines with Java heap, metaspace, code cache and process memory to the log every 30 seconds and when joining or leaving a world.",
   "vivecraft.options.FREE_MENU_WORLD_IN_GAME": "Free Menu World In Game",
   "vivecraft.options.FREE_MENU_WORLD_IN_GAME.tooltip": "Unloads the title-screen world while you play and loads it again on the title screen. Frees its memory (often hundreds of MB) for the game.",
-  "vivecraft.options.MENU_WORLD_STREAM_LOAD": "Stream Menu World Load",
-  "vivecraft.options.MENU_WORLD_STREAM_LOAD.tooltip": "Reads the menu world file as a stream instead of holding two full uncompressed copies in memory while it loads.",
   "vivecraft.options.SHARE_OUTLINE_TARGETS": "Share Outline Buffers",
   "vivecraft.options.SHARE_OUTLINE_TARGETS.tooltip": "Both eyes share one glowing-entity outline buffer, created only when something glows, instead of one full-size buffer per view.\n\nTakes effect after VR restarts.",
   "vivecraft.options.LAZY_AUX_BUFFERS": "Lazy Extra Buffers",

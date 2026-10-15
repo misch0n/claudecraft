@@ -23,7 +23,6 @@ public class GuiPerformanceSettings extends GuiListScreen {
         List<SettingsList.BaseEntry> entries = new LinkedList<>();
         entries.add(new SettingsList.CategoryEntry(Component.translatable("vivecraft.options.performance.memory")));
         entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.FREE_MENU_WORLD_IN_GAME));
-        entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.MENU_WORLD_STREAM_LOAD));
         entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.SHARE_OUTLINE_TARGETS));
         entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.LAZY_AUX_BUFFERS));
         entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.FIX_SUPPORTER_LEAK));

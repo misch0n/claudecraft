@@ -748,8 +748,6 @@ public class VRSettings {
     public boolean perfMemoryLog = true;
     @SettingField(VrOptions.FREE_MENU_WORLD_IN_GAME)
     public boolean freeMenuWorldInGame = true;
-    @SettingField(VrOptions.MENU_WORLD_STREAM_LOAD)
-    public boolean menuWorldStreamLoad = true;
     @SettingField(VrOptions.SHARE_OUTLINE_TARGETS)
     public boolean shareOutlineTargets = true;
     @SettingField(VrOptions.LAZY_AUX_BUFFERS)
@@ -2599,7 +2597,6 @@ public class VRSettings {
         // claudecraft: performance and stability (see PLAN.md)
         PERF_MEMORY_LOG(OptionType.BOOLEAN),
         FREE_MENU_WORLD_IN_GAME(OptionType.BOOLEAN),
-        MENU_WORLD_STREAM_LOAD(OptionType.BOOLEAN),
         SHARE_OUTLINE_TARGETS(OptionType.BOOLEAN),
         LAZY_AUX_BUFFERS(OptionType.BOOLEAN),
         FIX_SUPPORTER_LEAK(OptionType.BOOLEAN),
