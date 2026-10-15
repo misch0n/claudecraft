@@ -1,7 +1,6 @@
 package org.vivecraft.client_vr.render.helpers;
 
 import com.mojang.blaze3d.ProjectionType;
-import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.GpuTexture;
@@ -17,7 +16,9 @@ import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.Vec3i;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.phys.Vec3;
@@ -25,25 +26,23 @@ import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fStack;
 import org.joml.Vector3f;
-import org.lwjgl.opengl.GL11C;
-import org.lwjgl.opengl.GL30C;
+import org.vivecraft.api.client.data.RenderPass;
 import org.vivecraft.client_vr.ClientDataHolderVR;
 import org.vivecraft.client_vr.VRData;
 import org.vivecraft.client_vr.gameplay.screenhandlers.GuiHandler;
 import org.vivecraft.client_vr.gameplay.trackers.TelescopeTracker;
-import org.vivecraft.client_vr.provider.MCVR;
-import org.vivecraft.client_vr.render.RenderPass;
-import org.vivecraft.client_vr.render.helpers.opengl.OpenGLHelper;
-import org.vivecraft.client_vr.render.rendertypes.ShaderLightRenderType;
+import org.vivecraft.client_vr.render.helpers.graphics.GraphicsHelper;
 import org.vivecraft.client_vr.render.rendertypes.VRRenderTypes;
-import org.vivecraft.client_vr.settings.VRSettings;
 import org.vivecraft.common.utils.MathUtils;
+
+import java.util.List;
 
 public class RenderHelper {
 
     private static final ClientDataHolderVR DATA_HOLDER = ClientDataHolderVR.getInstance();
     private static final Minecraft MC = Minecraft.getInstance();
 
+    public static final ResourceLocation DEBUG_CAPE = ResourceLocation.parse("vivecraft:textures/cape.png");
     public static final ResourceLocation WHITE_TEXTURE = ResourceLocation.parse("vivecraft:textures/white.png");
     public static final ResourceLocation BLACK_TEXTURE = ResourceLocation.parse("vivecraft:textures/black.png");
 
@@ -221,7 +220,7 @@ public class RenderHelper {
 
         if (DATA_HOLDER.vrSettings.guiMipmaps) {
             // update mipmaps for Gui layer
-            OpenGLHelper.genMipmaps(MC.mainRenderTarget.getColorTexture());
+            GraphicsHelper.INSTANCE.genMipmaps(MC.mainRenderTarget.getColorTexture());
         }
     }
 
@@ -238,6 +237,53 @@ public class RenderHelper {
 
         guiGraphics.blitSprite(VRRenderTypes::crosshairMenu, Gui.CROSSHAIR_SPRITE, (int) (mouseX - size * 0.5F + 1),
             (int) (mouseY - size * 0.5F + 1), (int) size, (int) size);
+    }
+
+    /**
+     * draws the "connecting to vr runtime" message to the main rendertarget screen
+     */
+    public static void drawVRConnectingMessage() {
+        // clear depth, because text that was already there would be over ours
+        RenderSystem.getDevice().createCommandEncoder()
+            .clearDepthTexture(MC.getMainRenderTarget().getDepthTexture(), 1.0);
+        // setup modelview for screen rendering
+        Matrix4fStack poseStack = RenderSystem.getModelViewStack();
+        poseStack.pushMatrix();
+        poseStack.identity();
+        poseStack.translate(0.0F, 0.0F, -11000.0F);
+
+        // setup projection
+        float guiScale = (float) MC.getWindow().getGuiScale();
+        Matrix4f guiProjection = (new Matrix4f()).setOrtho(
+            0.0F, MC.getMainRenderTarget().width / guiScale,
+            MC.getMainRenderTarget().height / guiScale, 0.0F,
+            1000.0F, 21000.0F);
+        RenderSystem.setProjectionMatrix(guiProjection, ProjectionType.ORTHOGRAPHIC);
+
+        GuiGraphics guiGraphics = new GuiGraphics(MC, MC.renderBuffers().bufferSource());
+
+        int width = 200;
+        List<FormattedCharSequence> formattedChars = MC.font.split(
+            Component.translatable("vivecraft.messages.connectingtoruntime"), width - 10);
+        int height = formattedChars.size() * 8 + Math.max(formattedChars.size() - 1, 0) * 4 + 10;
+
+        int x = guiGraphics.guiWidth() / 2 - width / 2;
+        int y = guiGraphics.guiHeight() / 2 - height / 2;
+
+        // transparent background to dim the game
+        guiGraphics.fill(0, 0, guiGraphics.guiWidth(), guiGraphics.guiHeight(), 0x40000000);
+
+        // black background with border
+        guiGraphics.fill(x, y, x + width, y + height, 0xFF000000);
+        guiGraphics.renderOutline(x, y, width, height, 0xFFFFFFFF);
+
+        for (int line = 0; line < formattedChars.size(); line++) {
+            guiGraphics.drawCenteredString(MC.font, formattedChars.get(line), guiGraphics.guiWidth() / 2,
+                y + 5 + line * 12, 0xFFFFFFFF);
+        }
+        guiGraphics.flush();
+
+        poseStack.popMatrix();
     }
 
     /**
@@ -333,9 +379,8 @@ public class RenderHelper {
         float sizeY = sizeX * displayHeight / displayWidth;
 
         Vector3f normal = new Matrix3f(matrix).transform(new Vector3f(0, 0, 1)).normalize();
-        RenderType wrapped = new ShaderLightRenderType(renderType, normal);
 
-        VertexConsumer consumer = MC.renderBuffers().bufferSource().getBuffer(wrapped);
+        VertexConsumer consumer = MC.renderBuffers().bufferSource().getBuffer(renderType);
 
         consumer.addVertex(matrix, -sizeX, -sizeY, 0)
             .setColor(color[0], color[1], color[2], color[3])
@@ -358,7 +403,7 @@ public class RenderHelper {
             .setOverlay(OverlayTexture.NO_OVERLAY).setLight(packedLight)
             .setNormal(normal.x, normal.y, normal.z);
 
-        MC.renderBuffers().bufferSource().endBatch(wrapped);
+        MC.renderBuffers().bufferSource().endBatch(renderType);
     }
 
     /**
@@ -379,12 +424,11 @@ public class RenderHelper {
         Vec3 pos, float width, float height, float yaw, int r, int g, int b, int a, Matrix4f matrix,
         boolean depthAlways)
     {
-        RenderType renderType = VRRenderTypes.debugQuads(depthAlways);
+        RenderType renderType = VRRenderTypes.quads(depthAlways);
         VertexConsumer consumer = MC.renderBuffers().bufferSource().getBuffer(renderType);
 
         Vec3 offset = (new Vec3(width * 0.5F, 0.0, height * 0.5F))
             .yRot(Mth.DEG_TO_RAD * -yaw);
-        RenderSystem.setShaderTexture(0, getGpuTexture(RenderHelper.WHITE_TEXTURE));
 
         consumer.addVertex(matrix, (float) (pos.x + offset.x), (float) pos.y, (float) (pos.z + offset.z))
             .setColor(r, g, b, a);
@@ -505,33 +549,5 @@ public class RenderHelper {
     {
         consumer.addVertex(matrix, (float) pos.x, (float) pos.y, (float) pos.z)
             .setColor(color.getX(), color.getY(), color.getZ(), alpha);
-    }
-
-    /**
-     * checks if there were any opengl errors since this was last called
-     *
-     * @param errorSection name of the section that is checked, this gets logged if there are any errors
-     * @return error string if there was one
-     */
-    public static String checkGLError(String errorSection) {
-        int error = GlStateManager._getError();
-        if (error != 0) {
-            String errorString = switch (error) {
-                case GL11C.GL_INVALID_ENUM -> "invalid enum";
-                case GL11C.GL_INVALID_VALUE -> "invalid value";
-                case GL11C.GL_INVALID_OPERATION -> "invalid operation";
-                case GL11C.GL_STACK_OVERFLOW -> "stack overflow";
-                case GL11C.GL_STACK_UNDERFLOW -> "stack underflow";
-                case GL11C.GL_OUT_OF_MEMORY -> "out of memory";
-                case GL30C.GL_INVALID_FRAMEBUFFER_OPERATION -> "framebuffer is not complete";
-                default -> "unknown error";
-            };
-            VRSettings.LOGGER.error("Vivecraft: ########## GL ERROR ##########");
-            VRSettings.LOGGER.error("Vivecraft: @ {}", errorSection);
-            VRSettings.LOGGER.error("Vivecraft: {}: {}", error, errorString);
-            return errorString;
-        } else {
-            return "";
-        }
     }
 }

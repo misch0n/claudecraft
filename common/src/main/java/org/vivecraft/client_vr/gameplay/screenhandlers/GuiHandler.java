@@ -22,6 +22,8 @@ import org.joml.Vector2f;
 import org.joml.Vector2fc;
 import org.joml.Vector3f;
 import org.lwjgl.glfw.GLFW;
+import org.vivecraft.api.client.data.CloseKeyboardContext;
+import org.vivecraft.api.client.data.RenderPass;
 import org.vivecraft.client_vr.ClientDataHolderVR;
 import org.vivecraft.client_vr.MethodHolder;
 import org.vivecraft.client_vr.VRData;
@@ -32,7 +34,6 @@ import org.vivecraft.client_vr.provider.ControllerType;
 import org.vivecraft.client_vr.provider.HandedKeyBinding;
 import org.vivecraft.client_vr.provider.InputSimulator;
 import org.vivecraft.client_vr.provider.MCVR;
-import org.vivecraft.client_vr.render.RenderPass;
 import org.vivecraft.client_vr.render.helpers.RenderHelper;
 import org.vivecraft.client_vr.settings.AutoCalibration;
 import org.vivecraft.client_vr.settings.VRSettings;
@@ -106,12 +107,14 @@ public class GuiHandler {
     public static Vector3f GUI_POS_ROOM = null;
     public static Matrix4f GUI_ROTATION_ROOM = null;
 
-    public static Vec3 GUI_POS_WORLD = Vec3.ZERO;
-    public static Vector3f GUI_OFFSET_WORLD = new Vector3f();
-    public static Matrix4f GUI_ROTATION_WORLD = new Matrix4f();
+    public static Vector3f GUI_RENDER_POS_ROOM = null;
+    public static Vector3f GUI_OFFSET_LOCAL = new Vector3f();
+    public static Matrix4f GUI_RENDER_ROTATION_ROOM = new Matrix4f();
 
     public static Matrix4f GUI_ROTATION_PLAYER_MODEL = new Matrix4f();
     public static Vec3 GUI_POS_PLAYER_MODEL = Vec3.ZERO;
+
+    public static boolean HUD_POPUP;
 
     // for GUI scale override
     public static int GUI_WIDTH = 1280;
@@ -391,8 +394,8 @@ public class GuiHandler {
             GUI_ROTATION_ROOM = null;
             GUI_SCALE = 1.0F;
 
-            if (KeyboardHandler.KEYBOARD_FOR_GUI && DH.vrSettings.autoCloseKeyboard) {
-                KeyboardHandler.setOverlayShowing(false);
+            if (KeyboardHandler.KEYBOARD_FOR_GUI) {
+                KeyboardHandler.hideOverlay(CloseKeyboardContext.ACTION_COMPLETE);
             }
         } else {
             RadialHandler.setOverlayShowing(false, null);
@@ -526,11 +529,13 @@ public class GuiHandler {
         Vector3f guilocal = new Vector3f();
         float scale = GUI_SCALE;
 
-        if (GUI_POS_ROOM == null) {
+        boolean forceGuiToHUD = DH.vrSettings.forceGuiToHUD && MC.level != null && !MethodHolder.isInMenuRoom();
+
+        if (GUI_POS_ROOM == null || forceGuiToHUD) {
             guirot = null;
             scale = 1.0F;
 
-            if (MC.level != null && (MC.screen == null || !DH.vrSettings.floatInventory)) {
+            if (MC.level != null && (MC.screen == null || forceGuiToHUD || !DH.vrSettings.floatInventory)) {
                 // HUD view - attach to head or controller
                 int side = 1;
 
@@ -562,7 +567,8 @@ public class GuiHandler {
                     scale = DH.vrSettings.hudScale;
                 } else {
                     // attach to controller
-                    boolean modelArms = GUI_POS_PLAYER_MODEL != Vec3.ZERO && DH.vrSettings.shouldRenderSelf &&
+                    boolean modelArms = !MC.player.isSpectator() && GUI_POS_PLAYER_MODEL != Vec3.ZERO &&
+                        DH.vrSettings.shouldRenderSelf &&
                         DH.vrSettings.modelArmsMode == VRSettings.ModelArmsMode.COMPLETE;
                     if (modelArms) {
                         guirot = new Matrix4f().set3x3(GUI_ROTATION_PLAYER_MODEL);
@@ -573,7 +579,7 @@ public class GuiHandler {
                         guipos = RenderHelper.getControllerRenderPos(1);
                     }
 
-                    DH.vr.hudPopup = true;
+                    HUD_POPUP = true;
 
                     if (DH.vrSettings.vrHudLockMode == VRSettings.HUDLock.HAND) {
                         // hud on hand
@@ -606,7 +612,7 @@ public class GuiHandler {
 
                         guilocal.set(xOffset * side,
                             yOffset + yScaleOffset * (1.0F - armScale),
-                            0.14F * armScale);
+                            (0.12F + 0.02F * DH.vrSettings.vrHudWristOffset) * armScale);
                         guilocal.mul(DH.vrPlayer.vrdata_world_render.worldScale);
 
                         if (modelArms) {
@@ -619,6 +625,15 @@ public class GuiHandler {
                         guirot.rotateZ(Mth.HALF_PI * side);
                         guirot.rotateY(Mth.HALF_PI * side);
                     }
+                }
+                if (forceGuiToHUD) {
+                    // convert previously calculated coords to world coords
+                    GUI_POS_ROOM = VRPlayer.worldToRoomPos(
+                        guipos.add(new Vec3(guirot.transformDirection(guilocal, new Vector3f()))),
+                        DH.vrPlayer.vrdata_world_render);
+                    GUI_ROTATION_ROOM = new Matrix4f().rotationY(-DH.vrPlayer.vrdata_world_render.rotation_radians)
+                        .mul(guirot);
+                    GUI_SCALE = scale;
                 }
             }
         } else {
@@ -682,13 +697,14 @@ public class GuiHandler {
         poseMatrix.mul(guirot);
         poseMatrix.translate(guilocal.x, guilocal.y, guilocal.z);
 
+        GUI_SCALE_APPLIED = scale;
+        GUI_OFFSET_LOCAL.set(guilocal).div(DH.vrPlayer.vrdata_world_render.worldScale);
+
         float thescale = scale * DH.vrPlayer.vrdata_world_render.worldScale;
         poseMatrix.scale(thescale, thescale, thescale);
 
-        GUI_SCALE_APPLIED = thescale;
-        GUI_POS_WORLD = guipos;
-        GUI_ROTATION_WORLD.set(guirot);
-        GUI_OFFSET_WORLD.set(guilocal);
+        GUI_RENDER_POS_ROOM = VRPlayer.worldToRoomPos(guipos, DH.vrPlayer.vrdata_world_render);
+        GUI_RENDER_ROTATION_ROOM.rotationY(-DH.vrPlayer.vrdata_world_render.rotation_radians).mul(guirot);
 
         Profiler.get().pop();
 

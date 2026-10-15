@@ -18,9 +18,22 @@ public class ProjectileUtilMixin {
         if (instance instanceof ServerPlayer serverPlayer) {
             ServerVivePlayer serverVivePlayer = ServerVRPlayers.getVivePlayer(serverPlayer);
             if (serverVivePlayer != null && serverVivePlayer.isVR()) {
-                return serverVivePlayer.getAimDir();
+                // can be shot with the offhand
+                return serverVivePlayer.getAimDir(true);
             }
         }
         return original.call(instance, partialTick);
+    }
+
+    @WrapOperation(method = "getHitResultOnViewVector", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;getEyePosition()Lnet/minecraft/world/phys/Vec3;"))
+    private static Vec3 vivecraft$roomscaleBowPosition(Entity instance, Operation<Vec3> original) {
+        if (instance instanceof ServerPlayer serverPlayer) {
+            ServerVivePlayer serverVivePlayer = ServerVRPlayers.getVivePlayer(serverPlayer);
+            if (serverVivePlayer != null && serverVivePlayer.isVR()) {
+                // can be shot with the offhand
+                return serverVivePlayer.getAimPos(true);
+            }
+        }
+        return original.call(instance);
     }
 }

@@ -9,13 +9,14 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import org.joml.Vector3f;
+import org.vivecraft.api.client.ItemInUseTracker;
+import org.vivecraft.api.client.data.RenderPass;
 import org.vivecraft.client_vr.ClientDataHolderVR;
 import org.vivecraft.client_vr.VRData;
-import org.vivecraft.client_vr.render.RenderPass;
 import org.vivecraft.common.utils.MathUtils;
-import org.vivecraft.data.ItemTags;
+import org.vivecraft.data.ViveItemTags;
 
-public class TelescopeTracker extends Tracker {
+public class TelescopeTracker implements ItemInUseTracker {
     public static final ResourceLocation SCOPE_MODEL = ResourceLocation.fromNamespaceAndPath("vivecraft",
         "spyglass_in_hand");
     private static final float LENS_DIST_MAX = 0.05F;
@@ -25,8 +26,12 @@ public class TelescopeTracker extends Tracker {
 
     private final boolean[] viewing = new boolean[2];
 
+    private final Minecraft mc;
+    private final ClientDataHolderVR dh;
+
     public TelescopeTracker(Minecraft mc, ClientDataHolderVR dh) {
-        super(mc, dh);
+        this.mc = mc;
+        this.dh = dh;
     }
 
     @Override
@@ -42,13 +47,18 @@ public class TelescopeTracker extends Tracker {
     }
 
     @Override
-    public void reset(LocalPlayer player) {
+    public void inactiveProcess(LocalPlayer player) {
         this.viewing[0] = false;
         this.viewing[1] = false;
     }
 
     @Override
-    public void doProcess(LocalPlayer player) {
+    public ProcessType processType() {
+        return ProcessType.PER_TICK;
+    }
+
+    @Override
+    public void activeProcess(LocalPlayer player) {
         for (int c = 0; c < 2; c++) {
             if (isTelescope(player.getItemInHand(InteractionHand.values()[c]))) {
                 if (isViewing(c)) {
@@ -70,8 +80,9 @@ public class TelescopeTracker extends Tracker {
      * @return if the given {@code itemStack} is a telescope
      */
     public static boolean isTelescope(ItemStack itemStack) {
-        return itemStack != null &&
-            (itemStack.is(Items.SPYGLASS) || isLegacyTelescope(itemStack) || itemStack.is(ItemTags.VIVECRAFT_TELESCOPE)
+        return ClientDataHolderVR.getInstance().vrSettings.renderAllPasses || itemStack != null &&
+            (itemStack.is(Items.SPYGLASS) || isLegacyTelescope(itemStack) ||
+                itemStack.is(ViveItemTags.VIVECRAFT_TELESCOPE)
             );
     }
 
@@ -108,13 +119,16 @@ public class TelescopeTracker extends Tracker {
     }
 
     public static float viewPercent(int controller) {
+        if (ClientDataHolderVR.getInstance().vrSettings.renderAllPasses) {
+            return 1F;
+        }
         // seated doesn't have a fadeout
         LocalPlayer player = Minecraft.getInstance().player;
         if (player != null && ClientDataHolderVR.getInstance().vrSettings.seated) {
             if (isTelescope(player.getUseItem())) {
-                return 1;
+                return 1F;
             } else {
-                return 0;
+                return 0F;
             }
         }
 

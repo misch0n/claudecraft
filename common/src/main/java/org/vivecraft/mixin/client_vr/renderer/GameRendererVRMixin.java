@@ -17,6 +17,7 @@ import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.Mth;
@@ -24,14 +25,15 @@ import net.minecraft.util.profiling.Profiler;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import org.apache.commons.lang3.tuple.Triple;
+import org.apache.commons.lang3.tuple.Pair;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Quaternionfc;
 import org.joml.Vector3f;
-import org.lwjgl.opengl.GL11;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -40,23 +42,26 @@ import org.spongepowered.asm.mixin.injection.*;
 import org.spongepowered.asm.mixin.injection.At.Shift;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-import org.vivecraft.client.Xevents;
+import org.vivecraft.Xevents;
+import org.vivecraft.api.client.data.RenderPass;
 import org.vivecraft.client_vr.ClientDataHolderVR;
 import org.vivecraft.client_vr.MethodHolder;
 import org.vivecraft.client_vr.VRData;
 import org.vivecraft.client_vr.VRState;
 import org.vivecraft.client_vr.extensions.GameRendererExtension;
-import org.vivecraft.client_vr.gameplay.screenhandlers.KeyboardHandler;
-import org.vivecraft.client_vr.render.RenderPass;
+import org.vivecraft.client_vr.extensions.OptionInstanceExtension;
+import org.vivecraft.client_vr.extensions.WindowExtension;
+import org.vivecraft.client_vr.gameplay.VRPlayer;
 import org.vivecraft.client_vr.render.XRCamera;
-import org.vivecraft.client_vr.render.helpers.DebugRenderHelper;
 import org.vivecraft.client_vr.render.helpers.RenderHelper;
-import org.vivecraft.client_vr.render.helpers.VRArmHelper;
 import org.vivecraft.client_vr.render.helpers.VREffectsHelper;
+import org.vivecraft.client_vr.render.helpers.graphics.GraphicsHelper;
 import org.vivecraft.client_vr.settings.VRSettings;
 import org.vivecraft.client_xr.render_pass.RenderPassType;
 import org.vivecraft.common.utils.MathUtils;
 import org.vivecraft.mod_compat_vr.immersiveportals.ImmersivePortalsHelper;
+import org.vivecraft.mod_compat_vr.iris.IrisHelper;
+import org.vivecraft.mod_compat_vr.shaders.ShadersHelper;
 
 import java.util.function.Predicate;
 
@@ -71,13 +76,11 @@ public abstract class GameRendererVRMixin
     @Unique
     private static final float vivecraft$MIN_CLIP_DISTANCE = 0.02F;
     @Unique
-    private Vec3 vivecraft$crossVec;
-    @Unique
     private Matrix4f vivecraft$thirdPassProjectionMatrix = new Matrix4f();
     @Unique
     private boolean vivecraft$inwater;
     @Unique
-    private float vivecraft$inBlock = 0.0F;
+    private boolean vivecraft$inBlock = false;
     @Unique
     private double vivecraft$rveX;
     @Unique
@@ -129,6 +132,12 @@ public abstract class GameRendererVRMixin
     @Final
     private Camera mainCamera;
 
+    @Shadow
+    private float spinningEffectTime;
+
+    @Shadow
+    private float spinningEffectSpeed;
+
     @Redirect(method = "<init>", at = @At(value = "NEW", target = "net/minecraft/client/Camera"))
     private Camera vivecraft$replaceCamera() {
         return new XRCamera();
@@ -137,33 +146,52 @@ public abstract class GameRendererVRMixin
     @WrapMethod(method = "pick(F)V")
     private void vivecraft$vrPick(float partialTick, Operation<Void> original) {
         if (VRState.VR_RUNNING) {
+            // don't update the hitresult when chat is open
+            if (this.minecraft.screen != null && this.minecraft.hitResult != null) {
+                return;
+            }
             // skip when data not available yet
-            if (vivecraft$DATA_HOLDER.vrPlayer.vrdata_world_render == null ||
+            else if (vivecraft$DATA_HOLDER.vrPlayer.vrdata_world_render == null ||
                 this.minecraft.getCameraEntity() == null)
             {
+                // some mods don't like it when the hitresult is null, so set it to a miss
+                if (this.minecraft.player != null) {
+                    this.minecraft.hitResult = BlockHitResult.miss(this.minecraft.player.position(),
+                        this.minecraft.player.getDirection(), this.minecraft.player.blockPosition());
+                } else {
+                    this.minecraft.hitResult = BlockHitResult.miss(Vec3.ZERO, Direction.UP, BlockPos.ZERO);
+                }
                 return;
             }
 
+            AABB originalBB = this.minecraft.getCameraEntity().getBoundingBox();
             // set the entity position and view to the controller
             this.vivecraft$cacheRVEPos(this.minecraft.getCameraEntity());
             this.vivecraft$setupRVEAtDevice(vivecraft$DATA_HOLDER.vrPlayer.vrdata_world_render.getController(0));
-        }
+            // move the bounding box as well, this is used for entity hits
+            this.minecraft.getCameraEntity().setBoundingBox(originalBB.move(
+                this.minecraft.getCameraEntity().getX() - this.vivecraft$rveX,
+                this.minecraft.getCameraEntity().getY() - this.vivecraft$rveY,
+                this.minecraft.getCameraEntity().getZ() - this.vivecraft$rveZ));
 
-        // call the vanilla method
-        original.call(partialTick);
+            // call the vanilla method
+            original.call(partialTick);
 
-        if (VRState.VR_RUNNING) {
             // restore entity
             this.vivecraft$restoreRVEPos(this.minecraft.getCameraEntity());
+            this.minecraft.getCameraEntity().setBoundingBox(originalBB);
+        } else {
+            // call the vanilla method
+            original.call(partialTick);
         }
     }
 
     @ModifyArg(method = "pick(Lnet/minecraft/world/entity/Entity;DDF)Lnet/minecraft/world/phys/HitResult;", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;pick(DFZ)Lnet/minecraft/world/phys/HitResult;"), index = 0)
     private double vivecraft$getCrossVec(double hitDistance) {
         if (VRState.VR_RUNNING) {
+            VRPlayer vrPlayer = ClientDataHolderVR.getInstance().vrPlayer;
             // get the end of the reach point here, to have the correct reach distance
-            this.vivecraft$crossVec = vivecraft$DATA_HOLDER.vrPlayer.AimedPointAtDistance(
-                vivecraft$DATA_HOLDER.vrPlayer.vrdata_world_render.getAim(), hitDistance);
+            vrPlayer.crossVec = vrPlayer.AimedPointAtDistance(vrPlayer.vrdata_world_render.getAim(), hitDistance);
         }
         return hitDistance;
     }
@@ -213,9 +241,20 @@ public abstract class GameRendererVRMixin
             }
 
             aspect = switch (vivecraft$DATA_HOLDER.currentPass) {
-                case THIRD ->
-                    vivecraft$DATA_HOLDER.vrSettings.displayMirrorMode == VRSettings.MirrorMode.MIXED_REALITY ?
-                        vivecraft$DATA_HOLDER.vrSettings.mixedRealityAspectRatio : aspect;
+                case THIRD, CENTER -> {
+                    if (vivecraft$DATA_HOLDER.vrSettings.displayMirrorMode == VRSettings.MirrorMode.MIXED_REALITY) {
+                        yield vivecraft$DATA_HOLDER.vrSettings.mixedRealityAspectRatio;
+                    } else {
+                        if (ShadersHelper.needsSameSizeBuffers()) {
+                            // in this case the default aspect is wrong, since it has the aspect of the vr view
+                            WindowExtension window = (WindowExtension) (Object) this.minecraft.getWindow();
+                            yield (float) window.vivecraft$getActualScreenWidth() /
+                                window.vivecraft$getActualScreenHeight();
+                        } else {
+                            yield aspect;
+                        }
+                    }
+                }
                 case CAMERA -> (float) vivecraft$DATA_HOLDER.vrRenderer.cameraFramebuffer.viewWidth /
                     (float) vivecraft$DATA_HOLDER.vrRenderer.cameraFramebuffer.viewHeight;
                 case SCOPEL, SCOPER -> 1.0F;
@@ -241,11 +280,7 @@ public abstract class GameRendererVRMixin
     @Inject(method = "shouldRenderBlockOutline", at = @At("HEAD"), cancellable = true)
     private void vivecraft$shouldDrawBlockOutline(CallbackInfoReturnable<Boolean> cir) {
         if (!RenderPassType.isVanilla()) {
-            if (vivecraft$DATA_HOLDER.interactTracker.isInteractActive(0) &&
-                (vivecraft$DATA_HOLDER.interactTracker.inBlockHit[0] != null ||
-                    vivecraft$DATA_HOLDER.interactTracker.bukkit[0]
-                ))
-            {
+            if (vivecraft$DATA_HOLDER.blockModule.isActive(0)) {
                 // no block outline when the main arm has interaction
                 cir.setReturnValue(false);
             } else if (vivecraft$DATA_HOLDER.teleportTracker.isAiming() ||
@@ -312,47 +347,17 @@ public abstract class GameRendererVRMixin
             }
             return;
         }
-        if (!renderLevel || this.minecraft.level == null || MethodHolder.isInMenuRoom()) {
-            float partialTick = deltaTracker.getGameTimeDeltaPartialTick(false);
-            if (!renderLevel || this.minecraft.level == null) {
-                // no "level" got pushed so do a manual push
-                Profiler.get().push("MainMenu");
-            } else {
-                // do a popPush
-                Profiler.get().popPush("MainMenu");
-            }
-            GL11.glDisable(GL11.GL_STENCIL_TEST);
-
-            RenderSystem.getModelViewStack().pushMatrix().identity();
-            RenderHelper.applyVRModelView(vivecraft$DATA_HOLDER.currentPass, RenderSystem.getModelViewStack());
-
-            vivecraft$resetProjectionMatrix(partialTick);
-
-            VREffectsHelper.renderGuiLayer(partialTick, true);
-
-            DebugRenderHelper.renderDebug(partialTick);
-
-            if (KeyboardHandler.SHOWING) {
-                if (vivecraft$DATA_HOLDER.vrSettings.physicalKeyboard) {
-                    VREffectsHelper.renderPhysicalKeyboard(partialTick);
-                } else {
-                    VREffectsHelper.render2D(partialTick, KeyboardHandler.FRAMEBUFFER, KeyboardHandler.POS_ROOM,
-                        KeyboardHandler.ROTATION_ROOM,
-                        vivecraft$DATA_HOLDER.vrSettings.menuAlwaysFollowFace && MethodHolder.isInMenuRoom());
-                }
-            }
-
-            if (vivecraft$DATA_HOLDER.currentPass != RenderPass.CAMERA &&
-                (vivecraft$DATA_HOLDER.currentPass != RenderPass.THIRD ||
-                    vivecraft$DATA_HOLDER.vrSettings.mixedRealityRenderHands
-                ))
-            {
-                VRArmHelper.renderVRHands(partialTick, true, true, true, true);
-            }
-            RenderSystem.getModelViewStack().popMatrix();
+        if (renderLevel && this.minecraft.level != null) {
+            // pop the "world" push, since that would happen after this
+            Profiler.get().pop();
         }
-        // pop the "level" push, since that would happen after this
-        Profiler.get().pop();
+        if (!renderLevel || this.minecraft.level == null || MethodHolder.isInMenuRoom()) {
+            Profiler.get().push("MainMenu");
+            GraphicsHelper.INSTANCE.setStencil(false);
+
+            VREffectsHelper.renderMenuRoom(deltaTracker.getGameTimeDeltaPartialTick(false));
+            Profiler.get().pop();
+        }
         ci.cancel();
     }
 
@@ -370,7 +375,7 @@ public abstract class GameRendererVRMixin
 
     @WrapWithCondition(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/Gui;render(Lnet/minecraft/client/gui/GuiGraphics;Lnet/minecraft/client/DeltaTracker;)V"))
     private boolean vivecraft$noGUIWithViewOnly(Gui instance, GuiGraphics guiGraphics, DeltaTracker deltaTracker) {
-        return RenderPassType.isVanilla() || !ClientDataHolderVR.VIEW_ONLY;
+        return RenderPassType.isVanilla() || !vivecraft$DATA_HOLDER.viewOnly;
     }
 
     @Inject(method = "takeAutoScreenshot", at = @At("HEAD"), cancellable = true)
@@ -443,7 +448,7 @@ public abstract class GameRendererVRMixin
             original.call(instance, partialTick);
 
             if (this.minecraft.hitResult != null && this.minecraft.hitResult.getType() != HitResult.Type.MISS) {
-                this.vivecraft$crossVec = this.minecraft.hitResult.getLocation();
+                vivecraft$DATA_HOLDER.vrPlayer.crossVec = this.minecraft.hitResult.getLocation();
             }
 
             if (this.minecraft.screen == null) {
@@ -465,25 +470,62 @@ public abstract class GameRendererVRMixin
         }
     }
 
-    @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = "Lnet/minecraft/util/Mth;lerp(FFF)F"))
-    private float vivecraft$reduceNauseaAffect(float delta, float start, float end, Operation<Float> original) {
+    @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = "Ljava/lang/Math;max(FF)F", ordinal = 0))
+    private float vivecraft$reduceNauseaAffect(float a, float b, Operation<Float> original) {
         if (!RenderPassType.isVanilla()) {
             // scales down the effect from (1,0.65) to (1,0.9)
-            return original.call(delta, start, end) * 0.4F;
+            return original.call(a, b) * 0.4F;
         } else {
-            return original.call(delta, start, end);
+            return original.call(a, b);
         }
     }
 
-    @ModifyArg(at = @At(value = "INVOKE", target = "Lorg/joml/Matrix4f;rotation(Lorg/joml/Quaternionfc;)Lorg/joml/Matrix4f;", remap = false), method = "renderLevel", index = 0, remap = true)
+    @ModifyArg(method = "renderLevel", at = @At(value = "INVOKE", target = "Lorg/joml/Matrix4f;rotation(Lorg/joml/Quaternionfc;)Lorg/joml/Matrix4f;", remap = false), index = 0, remap = true)
     public Quaternionfc vivecraft$nullifyCameraRotation(Quaternionfc rotation) {
         return RenderPassType.isVanilla() ? rotation : new Quaternionf();
+    }
+
+    @Unique
+    private float vivecraft$storedSpinningEffectTime;
+
+    @Unique
+    private float vivecraft$storedSpinningEffectSpeed;
+
+    @Unique
+    private double vivecraft$storedScreenEffectScale;
+
+    @Inject(method = "renderLevel", at = @At(value = "INVOKE", target = "Lorg/joml/Matrix4f;rotation(Lorg/joml/Quaternionfc;)Lorg/joml/Matrix4f;", remap = false), remap = true)
+    public void vivecraft$irisNauseReduction1(CallbackInfo ci) {
+        if (!RenderPassType.isVanilla() && IrisHelper.isLoaded()) {
+            // backup
+            this.vivecraft$storedSpinningEffectTime = this.spinningEffectTime;
+            this.vivecraft$storedSpinningEffectSpeed = this.spinningEffectSpeed;
+            this.vivecraft$storedScreenEffectScale = this.minecraft.options.screenEffectScale().get();
+            // spin spead
+            this.spinningEffectTime *= 0.2F;
+            this.spinningEffectSpeed *= 0.2F;
+            // stretch amount
+            // square root of 0.4, since this gets squared before applying
+            ((OptionInstanceExtension<Double>) (Object) this.minecraft.options.screenEffectScale()).vivecraft$setWithoutUpdate(
+                this.vivecraft$storedScreenEffectScale * 0.6324555320336759);
+        }
+    }
+
+    @Inject(method = "renderLevel", at = @At(value = "INVOKE", target = "Lorg/joml/Matrix4f;rotation(Lorg/joml/Quaternionfc;)Lorg/joml/Matrix4f;", shift = At.Shift.AFTER, remap = false), remap = true)
+    public void vivecraft$irisNauseReduction2(CallbackInfo ci) {
+        if (!RenderPassType.isVanilla() && IrisHelper.isLoaded()) {
+            // restore
+            this.spinningEffectTime = this.vivecraft$storedSpinningEffectTime;
+            this.spinningEffectSpeed = this.vivecraft$storedSpinningEffectSpeed;
+            ((OptionInstanceExtension<Double>) (Object) this.minecraft.options.screenEffectScale()).vivecraft$setWithoutUpdate(
+                this.vivecraft$storedScreenEffectScale);
+        }
     }
 
     @ModifyArg(method = "renderLevel", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/LevelRenderer;prepareCullFrustum(Lnet/minecraft/world/phys/Vec3;Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;)V"), index = 1)
     private Matrix4f vivecraft$applyModelView(Matrix4f matrix) {
         if (!RenderPassType.isVanilla()) {
-            RenderHelper.applyVRModelView(ClientDataHolderVR.getInstance().currentPass, matrix);
+            RenderHelper.applyVRModelView(vivecraft$DATA_HOLDER.currentPass, matrix);
         }
         return matrix;
     }
@@ -554,7 +596,7 @@ public abstract class GameRendererVRMixin
             this.vivecraft$rveprevZ = entity.zo;
             this.vivecraft$rvepitch = entity.getXRot();
             this.vivecraft$rvelastpitch = entity.xRotO;
-            this.vivecraft$rveHeight = entity.getEyeHeight();
+            this.vivecraft$rveHeight = entity.eyeHeight;
             if (entity instanceof LivingEntity livingEntity) {
                 this.vivecraft$rveyaw = livingEntity.yHeadRot;
                 this.vivecraft$rvelastyaw = livingEntity.yHeadRotO;
@@ -608,22 +650,17 @@ public abstract class GameRendererVRMixin
 
     @Unique
     private void vivecraft$setupOverlayStatus() {
-        this.vivecraft$inBlock = 0.0F;
+        this.vivecraft$inBlock = false;
         this.vivecraft$inwater = false;
 
         if (!this.minecraft.player.isSpectator() && !MethodHolder.isInMenuRoom() && this.minecraft.player.isAlive()) {
-            Vec3 cameraPos = this.mainCamera.getPosition();
-            Triple<Float, BlockState, BlockPos> triple = VREffectsHelper.getNearOpaqueBlock(cameraPos,
+            Vec3 cameraPos = vivecraft$DATA_HOLDER.vrPlayer.getVRDataWorld().getEye(vivecraft$DATA_HOLDER.currentPass)
+                .getPosition();
+            Pair<BlockState, BlockPos> pair = VREffectsHelper.getNearOpaqueBlock(cameraPos,
                 vivecraft$MIN_CLIP_DISTANCE);
 
-            if (triple != null &&
-                !Xevents.renderBlockOverlay(this.minecraft.player, new PoseStack(), triple.getMiddle(),
-                    triple.getRight()))
-            {
-                this.vivecraft$inBlock = triple.getLeft();
-            } else {
-                this.vivecraft$inBlock = 0.0F;
-            }
+            this.vivecraft$inBlock = pair != null &&
+                !Xevents.renderBlockOverlay(this.minecraft.player, new PoseStack(), pair.getLeft(), pair.getRight());
 
             this.vivecraft$inwater = this.minecraft.player.isEyeInFluid(FluidTags.WATER) &&
                 !Xevents.renderWaterOverlay(this.minecraft.player, new PoseStack());
@@ -638,14 +675,8 @@ public abstract class GameRendererVRMixin
 
     @Override
     @Unique
-    public float vivecraft$isInBlock() {
+    public boolean vivecraft$isInBlock() {
         return this.vivecraft$inBlock;
-    }
-
-    @Override
-    @Unique
-    public Vec3 vivecraft$getCrossVec() {
-        return this.vivecraft$crossVec;
     }
 
     @Override

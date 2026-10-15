@@ -10,9 +10,9 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
+import org.vivecraft.api.data.FBTMode;
 import org.vivecraft.client_vr.ClientDataHolderVR;
 import org.vivecraft.client_vr.VRState;
-import org.vivecraft.client_vr.settings.VRSettings;
 
 @Mixin(AbstractBoat.class)
 public abstract class AbstractBoatMixin extends Entity {
@@ -48,9 +48,14 @@ public abstract class AbstractBoatMixin extends Entity {
             // only custom boat controls in standing mode
             if (this.inputUp) {
                 // controller-based
-                float yaw = dataHolder.vrSettings.vrFreeMoveMode == VRSettings.FreeMove.HMD ?
-                    dataHolder.vrPlayer.vrdata_world_pre.hmd.getYaw() :
-                    dataHolder.vrPlayer.vrdata_world_pre.getController(1).getYaw();
+                float yaw = switch (dataHolder.vrSettings.getVrFreeMoveMode(false)) {
+                    case HMD -> dataHolder.vrPlayer.vrdata_world_pre.hmd.getYaw();
+                    case WAIST -> dataHolder.vrPlayer.vrdata_world_pre.fbtMode == FBTMode.ARMS_ONLY ?
+                        dataHolder.vrPlayer.vrdata_world_pre.getBodyYawRad() :
+                        dataHolder.vrPlayer.vrdata_world_pre.waist.getYaw();
+                    default -> dataHolder.vrPlayer.vrdata_world_pre.getController(1).getYaw();
+                };
+
                 if (dataHolder.vrSettings.vehicleRotation) {
                     // tank controls
                     float end = this.getYRot() % 360F;

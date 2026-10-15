@@ -2,8 +2,8 @@ package org.vivecraft.client.gui.settings;
 
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.screens.Screen;
-import org.vivecraft.client.gui.framework.GuiVROption;
-import org.vivecraft.client.gui.framework.GuiVROptionsBase;
+import org.vivecraft.client.gui.framework.screens.GuiVROptionsBase;
+import org.vivecraft.client.gui.framework.widgets.GuiVROption;
 import org.vivecraft.client_vr.settings.VRSettings;
 
 public class GuiFreeMoveSettings extends GuiVROptionsBase {
@@ -13,9 +13,11 @@ public class GuiFreeMoveSettings extends GuiVROptionsBase {
         VRSettings.VrOptions.FOV_REDUCTION,
         VRSettings.VrOptions.INERTIA_FACTOR,
         VRSettings.VrOptions.MOVEMENT_MULTIPLIER,
+        VRSettings.VrOptions.SPRINT_MOVEMENT_MULTIPLIER,
         VRSettings.VrOptions.AUTO_SPRINT,
         VRSettings.VrOptions.AUTO_SPRINT_THRESHOLD,
-        VRSettings.VrOptions.ANALOG_MOVEMENT
+        VRSettings.VrOptions.ANALOG_MOVEMENT,
+        VRSettings.VrOptions.DIGITAL_MOVEMENT_DEADZONE
     };
     private static final VRSettings.VrOptions[] SEATED_SETTINGS = new VRSettings.VrOptions[]{
         VRSettings.VrOptions.SEATED_HMD,

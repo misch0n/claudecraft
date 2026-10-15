@@ -1,5 +1,8 @@
 package org.vivecraft.mod_compat_vr.optifine;
 
+import com.mojang.blaze3d.opengl.GlStateManager;
+import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -13,7 +16,9 @@ import org.apache.commons.lang3.tuple.Triple;
 import org.joml.Matrix4fc;
 import org.joml.Vector3f;
 import org.joml.Vector3fc;
+import org.lwjgl.opengl.GL30C;
 import org.lwjgl.system.MemoryUtil;
+import org.vivecraft.client_vr.render.helpers.graphics.GraphicsHelper;
 import org.vivecraft.client_vr.settings.VRSettings;
 import org.vivecraft.mod_compat_vr.shaders.ShadersHelper;
 
@@ -30,6 +35,8 @@ public class OptifineHelper {
 
     private static boolean CHECKED_FOR_OPTIFINE = false;
     private static boolean OPTIFINE_LOADED = false;
+
+    public static boolean UNIFORMS_UPDATED = false;
 
     private static final Map<String, Pair<ShadersHelper.UniformType, Object>> SHADER_UNIFORMS = new HashMap<>();
     private static final Map<String, Object> SHADER_UNIFORMS_DATA = new HashMap<>();
@@ -67,6 +74,8 @@ public class OptifineHelper {
     private static Field Shaders_DFB;
     private static Field Shaders_isShadowPass;
     private static Field Shaders_shaderUniforms;
+
+    private static Method GlState_unbindFramebuffer;
 
     private static Method ShadersFramebuffer_BindFramebuffer;
 
@@ -131,7 +140,7 @@ public class OptifineHelper {
     }
 
     /**
-     * binds the Shaders_ framebuffer
+     * binds the Shader framebuffer
      *
      * @return if the shader framebuffer got bound
      */
@@ -146,6 +155,44 @@ public class OptifineHelper {
             logError(e, "dfb.BindFramebuffer");
         }
         return false;
+    }
+
+    /**
+     * unbinds the Shader framebuffer
+     */
+    public static void unbindShaderFramebuffer() {
+        try {
+            if (GlState_unbindFramebuffer != null) {
+                GlState_unbindFramebuffer.invoke(null);
+            }
+        } catch (InvocationTargetException | IllegalAccessException e) {
+            logError(e, "GlState.unbindFramebuffer");
+        }
+    }
+
+    /**
+     * copies the depth of the optifine shader frame buffer
+     *
+     * @param renderTarget renderTarget to copy the depth to
+     */
+    public static void copyOptifineShaderDepth(RenderTarget renderTarget) {
+        if (renderTarget.getDepthTexture() instanceof GlTexture glTexture) {
+            if (!bindShaderFramebuffer()) {
+                return;
+            }
+
+            GlStateManager._activeTexture(GL30C.GL_TEXTURE0);
+            GlStateManager._bindTexture(glTexture.glId());
+
+            GraphicsHelper.INSTANCE.checkError("pre copy depth");
+            GL30C.glCopyTexSubImage2D(GL30C.GL_TEXTURE_2D, 0, 0, 0, 0, 0, renderTarget.width, renderTarget.height);
+            GraphicsHelper.INSTANCE.checkError("post copy depth");
+
+            unbindShaderFramebuffer();
+            GlStateManager._bindTexture(0);
+        } else {
+            throw new IllegalStateException("Vivecraft: only opengl textures are supported");
+        }
     }
 
     /**
@@ -472,7 +519,7 @@ public class OptifineHelper {
      * creates and updates Optifines shader uniforms added by vivecraft
      */
     public static void updateUniforms() {
-        if (!isOptifineLoaded()) return;
+        if (!isOptifineLoaded() || UNIFORMS_UPDATED) return;
         try {
             for (Triple<String, ShadersHelper.UniformType, Supplier<?>> uniform : ShadersHelper.getUniforms()) {
                 String name = uniform.getLeft();
@@ -509,6 +556,7 @@ public class OptifineHelper {
         } catch (IllegalAccessException | InvocationTargetException e) {
             VRSettings.LOGGER.error("Vivecraft: error updating shader uniform data:", e);
         }
+        UNIFORMS_UPDATED = true;
     }
 
     /**
@@ -593,6 +641,13 @@ public class OptifineHelper {
 
             Class<?> ShadersFramebuffer = Class.forName("net.optifine.shaders.ShadersFramebuffer");
             ShadersFramebuffer_BindFramebuffer = ShadersFramebuffer.getMethod("bindFramebuffer");
+
+            try {
+                Class<?> GlState = Class.forName("net.optifine.shaders.GlState");
+                GlState_unbindFramebuffer = GlState.getMethod("unbindFramebuffer");
+            } catch (ClassNotFoundException | NoSuchMethodException e) {
+                VRSettings.LOGGER.warn("Vivecraft: Optifine detected with no framebuffer unbinding");
+            }
 
             // private methods
             CustomColors_GetSkyColoEnd = CustomColors.getDeclaredMethod("getSkyColorEnd", Vec3.class);

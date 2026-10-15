@@ -7,19 +7,16 @@ import net.minecraft.util.profiling.Profiler;
 import org.apache.commons.lang3.tuple.Triple;
 import org.joml.*;
 import org.lwjgl.glfw.GLFW;
+import org.vivecraft.api.data.FBTMode;
 import org.vivecraft.client.VivecraftVRMod;
 import org.vivecraft.client.utils.ClientUtils;
 import org.vivecraft.client_vr.ClientDataHolderVR;
 import org.vivecraft.client_vr.MethodHolder;
 import org.vivecraft.client_vr.gameplay.screenhandlers.GuiHandler;
-import org.vivecraft.client_vr.provider.ControllerType;
-import org.vivecraft.client_vr.provider.DeviceSource;
-import org.vivecraft.client_vr.provider.MCVR;
-import org.vivecraft.client_vr.provider.VRRenderer;
+import org.vivecraft.client_vr.provider.*;
 import org.vivecraft.client_vr.provider.control.VRInputAction;
 import org.vivecraft.client_vr.render.MirrorNotification;
 import org.vivecraft.client_vr.settings.VRSettings;
-import org.vivecraft.common.network.FBTMode;
 import org.vivecraft.common.utils.MathUtils;
 
 import java.lang.Math;
@@ -29,7 +26,6 @@ import java.util.List;
  * MCVR implementation that does not interact with any runtime.
  */
 public class NullVR extends MCVR {
-    private static final float IPD = 0.1F;
 
     protected static NullVR OME;
 
@@ -37,9 +33,14 @@ public class NullVR extends MCVR {
 
     protected static final int HEAD_TRACKER = CAMERA_TRACKER;
 
+    protected boolean polled;
+
     private BodyPart currentBodyPart = BodyPart.HEAD;
-    private boolean syncBodyparts = true;
     private FBTMode fbtMode = FBTMode.ARMS_ONLY;
+    // when on, moves arms/legs on both sides, when off, moves only the right one
+    private boolean syncBodyparts = true;
+    // when on, moves the bodyparts relative to the room, when off, moves them relative to their orientation
+    private boolean moveRoom = true;
 
     private ControllerTransform controllerType = ControllerTransform.NULL;
 
@@ -108,12 +109,9 @@ public class NullVR extends MCVR {
             this.hmdPose.identity();
             this.hmdPose.m31(1.62F);
 
-            // eye offset, 10cm total distance
-            this.hmdPoseLeftEye.set(this.hmdPose);
-            this.hmdPoseLeftEye.m30(-IPD * 0.5F);
-
-            this.hmdPoseRightEye.set(this.hmdPose);
-            this.hmdPoseRightEye.m30(IPD * 0.5F);
+            // eye poses are absolute (room space) with the OpenXR-capable MCVR, half the IPD in each direction
+            this.hmdPose.translate(-this.dh.vrSettings.nullvrIPD * 0.5F, 0F, 0F, this.hmdPoseLeftEye);
+            this.hmdPose.translate(this.dh.vrSettings.nullvrIPD * 0.5F, 0F, 0F, this.hmdPoseRightEye);
 
             this.populateInputActions();
 
@@ -158,6 +156,10 @@ public class NullVR extends MCVR {
             this.hmdPose.rotation(this.deviceRotations[HEAD_TRACKER]);
             this.hmdPose.setTranslation(this.deviceOffsets[HEAD_TRACKER]);
 
+            // update each frame to make the setting work; eye poses are absolute (room space)
+            this.hmdPose.translate(-this.dh.vrSettings.nullvrIPD * 0.5F, 0F, 0F, this.hmdPoseLeftEye);
+            this.hmdPose.translate(this.dh.vrSettings.nullvrIPD * 0.5F, 0F, 0F, this.hmdPoseRightEye);
+
             // fbt trackers index 3-9
             for (int i = 3; i < TRACKABLE_DEVICE_COUNT; i++) {
                 if (this.deviceSource[i].source != DeviceSource.Source.OSC ||
@@ -186,27 +188,30 @@ public class NullVR extends MCVR {
                 }
             }
 
-            if (!this.dh.vrSettings.seated) {
-                if (this.mc.screen == null && this.dh.vrSettings.vrTouchHotbar) {
-                    Profiler.get().popPush("touchHotbar");
-                    if (this.dh.vrSettings.vrHudLockMode != VRSettings.HUDLock.HEAD && this.hudPopup) {
-                        this.processHotbar();
-                    }
-                }
-            }
-
+            Profiler.get().popPush("processInputs");
+            this.processInputs();
             Profiler.get().popPush("hmdSampling");
             this.hmdSampling();
+
+            Profiler.get().pop();
+            this.polled = true;
         }
+
+        ((NullVRHapticScheduler) this.hapticScheduler).tick();
     }
 
     @Override
-    public void processInputs() {}
+    public void processInputs() {
+        this.ignorePressesNextFrame = false;
+    }
 
     @Override
     protected ControllerType findActiveBindingControllerType(KeyMapping keyMapping) {
         return null;
     }
+
+    @Override
+    public void refreshControllerTransforms() {}
 
     @Override
     public Matrix4fc getControllerComponentTransform(int controllerIndex, String componentName) {
@@ -262,7 +267,7 @@ public class NullVR extends MCVR {
 
     @Override
     public List<Long> getOrigins(VRInputAction action) {
-        return null;
+        return List.of();
     }
 
     @Override
@@ -287,7 +292,7 @@ public class NullVR extends MCVR {
 
     @Override
     public float getIPD() {
-        return IPD;
+        return this.dh.vrSettings.nullvrIPD;
     }
 
     @Override
@@ -298,15 +303,21 @@ public class NullVR extends MCVR {
     @Override
     public boolean handleKeyboardInputs(int key, int scanCode, int action, int modifiers) {
         boolean triggered = false;
+        if (MethodHolder.isKeyDown(GLFW.GLFW_KEY_RIGHT_CONTROL) && action == GLFW.GLFW_PRESS &&
+            key == GLFW.GLFW_KEY_KP_ADD)
+        {
+            MOD.keyVRInteract.pressKey(ControllerType.LEFT);
+            MOD.keyVRInteract.pressKey(ControllerType.RIGHT);
+        } else if (!MethodHolder.isKeyDown(GLFW.GLFW_KEY_RIGHT_CONTROL) ||
+            !MethodHolder.isKeyDown(GLFW.GLFW_KEY_KP_ADD))
+        {
+            MOD.keyVRInteract.unpressKey(ControllerType.LEFT);
+            MOD.keyVRInteract.unpressKey(ControllerType.RIGHT);
+        }
         if (MethodHolder.isKeyDown(GLFW.GLFW_KEY_RIGHT_CONTROL)) {
             if (action == GLFW.GLFW_PRESS) {
                 if (key == GLFW.GLFW_KEY_F6) {
                     this.vrActive = !this.vrActive;
-                    return true;
-                }
-                if (key == GLFW.GLFW_KEY_KP_ADD) {
-                    MOD.keyVRInteract.pressKey(ControllerType.LEFT);
-                    MOD.keyVRInteract.pressKey(ControllerType.RIGHT);
                     return true;
                 }
 
@@ -314,6 +325,9 @@ public class NullVR extends MCVR {
 
                 if (key == GLFW.GLFW_KEY_F9) {
                     this.controllerType = ClientUtils.getNextEnum(this.controllerType, offset);
+                    if (this.controllerType == ControllerTransform.AUTO) {
+                        this.controllerType = ClientUtils.getNextEnum(this.controllerType, offset);
+                    }
                     Vector3f tipForward = this.controllerType.tipR.transformDirection(MathUtils.BACK, new Vector3f());
                     Vector3f handForward = this.controllerType.handGripR.transformDirection(MathUtils.BACK,
                         new Vector3f());
@@ -336,60 +350,67 @@ public class NullVR extends MCVR {
                     this.syncBodyparts = !this.syncBodyparts;
                     MirrorNotification.notify("toggled body part sync to : " + this.syncBodyparts, false, 1000);
                     triggered = true;
+                } else if (key == GLFW.GLFW_KEY_KP_DIVIDE) {
+                    // toggle movement space
+                    this.moveRoom = !this.moveRoom;
+                    MirrorNotification.notify("toggled body part room relative to : " + this.moveRoom, false, 1000);
+                    triggered = true;
                 }
             }
 
             if (action != GLFW.GLFW_RELEASE) {
                 if (MethodHolder.isKeyDown(GLFW.GLFW_KEY_RIGHT_ALT)) {
+                    float angle = Mth.PI / 18.0F;
                     // rotate current bodypart
                     if (key == GLFW.GLFW_KEY_KP_8) {
-                        rotateBody(-Mth.PI / 18.0F, MathUtils.RIGHT);
+                        rotateBody(-angle, MathUtils.RIGHT);
                         triggered = true;
                     }
                     if (key == GLFW.GLFW_KEY_KP_2) {
-                        rotateBody(Mth.PI / 18.0F, MathUtils.RIGHT);
+                        rotateBody(angle, MathUtils.RIGHT);
                         triggered = true;
                     }
                     if (key == GLFW.GLFW_KEY_KP_4) {
-                        rotateBody(Mth.PI / 18.0F, MathUtils.UP);
+                        rotateBody(angle, MathUtils.UP);
                         triggered = true;
                     }
                     if (key == GLFW.GLFW_KEY_KP_6) {
-                        rotateBody(-Mth.PI / 18.0F, MathUtils.UP);
+                        rotateBody(-angle, MathUtils.UP);
                         triggered = true;
                     }
                     if (key == GLFW.GLFW_KEY_KP_9) {
-                        rotateBody(Mth.PI / 18.0F, MathUtils.BACK);
+                        rotateBody(angle, MathUtils.BACK);
                         triggered = true;
                     }
                     if (key == GLFW.GLFW_KEY_KP_7) {
-                        rotateBody(-Mth.PI / 18.0F, MathUtils.BACK);
+                        rotateBody(-angle, MathUtils.BACK);
                         triggered = true;
                     }
                 } else {
+                    float offset = 0.01F;
                     // move current bodypart
                     if (key == GLFW.GLFW_KEY_KP_8) {
-                        translateBody(0F, 0F, -0.01F);
+                        translateBody(0F, 0F, -offset);
                         triggered = true;
                     }
                     if (key == GLFW.GLFW_KEY_KP_2) {
-                        translateBody(0F, 0F, 0.01F);
+                        translateBody(0F, 0F, offset);
                         triggered = true;
                     }
                     if (key == GLFW.GLFW_KEY_KP_4) {
-                        translateBody(-0.01F, 0F, 0F);
+                        translateBody(-offset, 0F, 0F);
                         triggered = true;
                     }
                     if (key == GLFW.GLFW_KEY_KP_6) {
-                        translateBody(0.01F, 0F, 0F);
+                        translateBody(offset, 0F, 0F);
                         triggered = true;
                     }
                     if (key == GLFW.GLFW_KEY_KP_9) {
-                        translateBody(0F, 0.01F, 0F);
+                        translateBody(0F, offset, 0F);
                         triggered = true;
                     }
                     if (key == GLFW.GLFW_KEY_KP_3) {
-                        translateBody(0F, -0.01F, 0F);
+                        translateBody(0F, -offset, 0F);
                         triggered = true;
                     }
                 }
@@ -411,9 +432,19 @@ public class NullVR extends MCVR {
     }
 
     private void translateBody(float x, float y, float z) {
-        this.deviceOffsets[this.currentBodyPart.rightIndex].add(x, y, z);
+        if (this.moveRoom) {
+            this.deviceOffsets[this.currentBodyPart.rightIndex].add(x, y, z);
+        } else {
+            this.deviceOffsets[this.currentBodyPart.rightIndex].add(
+                this.deviceRotations[this.currentBodyPart.rightIndex].transform(x, y, z, new Vector3f()));
+        }
         if (this.currentBodyPart.leftIndex != -1 && this.syncBodyparts) {
-            this.deviceOffsets[this.currentBodyPart.leftIndex].add(-x, y, z);
+            if (this.moveRoom) {
+                this.deviceOffsets[this.currentBodyPart.leftIndex].add(-x, y, z);
+            } else {
+                this.deviceOffsets[this.currentBodyPart.leftIndex].add(
+                    this.deviceRotations[this.currentBodyPart.leftIndex].transform(x, y, z, new Vector3f()));
+            }
         }
     }
 }

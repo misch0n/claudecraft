@@ -1,8 +1,8 @@
 package org.vivecraft.client.gui.settings;
 
 import net.minecraft.client.gui.screens.Screen;
-import org.vivecraft.client.gui.framework.GuiVROptionsBase;
 import org.vivecraft.client.gui.framework.VROptionEntry;
+import org.vivecraft.client.gui.framework.screens.GuiVROptionsBase;
 import org.vivecraft.client_vr.settings.VRSettings;
 
 public class GuiPostEffectsSettings extends GuiVROptionsBase {
@@ -12,7 +12,8 @@ public class GuiPostEffectsSettings extends GuiVROptionsBase {
         new VROptionEntry(VRSettings.VrOptions.WATER_EFFECT),
         new VROptionEntry(VRSettings.VrOptions.PORTAL_EFFECT),
         new VROptionEntry(VRSettings.VrOptions.FREEZE_EFFECT),
-        new VROptionEntry(VRSettings.VrOptions.PUMPKIN_EFFECT)
+        new VROptionEntry(VRSettings.VrOptions.PUMPKIN_EFFECT),
+        new VROptionEntry(VRSettings.VrOptions.SLEEP_EFFECT)
     };
 
     public GuiPostEffectsSettings(Screen lastScreen) {
