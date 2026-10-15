@@ -1,0 +1,373 @@
+package org.vmstudio.visor.mixin.common.player;
+
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.llamalad7.mixinextras.sugar.Local;
+import net.minecraft.world.InteractionHand;
+import org.objectweb.asm.Opcodes;
+import org.vmstudio.visor.api.compatibility.mcversion.McVersionUtils;
+
+import me.phoenixra.atumconfig.api.tuples.PairRecord;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.network.protocol.game.ClientboundBlockDestructionPacket;
+import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ServerPlayerGameMode;
+import net.minecraft.server.network.ServerGamePacketListenerImpl;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.vmstudio.visor.api.VisorAPI;
+import org.vmstudio.visor.api.common.HandType;
+import org.vmstudio.visor.api.common.network.toclient.BlockDamagePayloadToClient;
+import org.vmstudio.visor.api.common.player.VRPlayer;
+import org.vmstudio.visor.api.server.VRServerSettings;
+import org.vmstudio.visor.api.server.player.VRServerPlayer;
+import org.vmstudio.visor.core.common.CommonUtils;
+import org.vmstudio.visor.core.server.network.ServerNetworking;
+import org.vmstudio.visor.extensions.common.ServerPlayerGameModeExtension;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Mixin(ServerPlayerGameMode.class)
+public abstract class ServerPlayerGameModeMixin implements ServerPlayerGameModeExtension {
+    @Shadow
+    protected ServerLevel level;
+    @Shadow
+    @Final
+    protected ServerPlayer player;
+
+    @Shadow
+    private GameType gameModeForPlayer;
+    @Shadow
+    private BlockPos destroyPos;
+    @Shadow
+    private BlockPos delayedDestroyPos;
+    @Shadow
+    private int destroyProgressStart;
+    @Shadow
+    private int delayedTickStart;
+    @Shadow
+    private int lastSentState;
+    @Shadow
+    private boolean isDestroyingBlock;
+    @Shadow
+    private boolean hasDelayedDestroy;
+
+    @Shadow
+    private int gameTicks;
+
+
+    @Unique
+    private Map<Long, PairRecord<Long, Float>>
+            visor$blockDamage = new HashMap<>();
+
+    @Unique
+    private Map<Long, Integer> visor$blockDamageStart = new HashMap<>();
+
+    @Unique
+    private static final int visor$MINING_BONUS_TICKS = 2;
+
+
+    @Shadow
+    protected abstract void debugLogging(BlockPos blockPos,
+                                         boolean bl, int i, String string
+    );
+
+    @Shadow
+    public abstract boolean isCreative();
+
+    @Shadow
+    public abstract boolean destroyBlock(BlockPos blockPos);
+    @Shadow
+    public abstract void destroyAndAck(BlockPos pos, int sequence, String message);
+
+    @Shadow
+    protected abstract float incrementDestroyProgress(
+            BlockState blockState,
+            BlockPos blockPos,
+            int i
+    );
+
+
+    /* ***************************************** *\
+  //--------TWO HANDED VR (OFFHAND SUPPORT)--------\\
+    \* ***************************************** */
+    @Unique
+    private ItemStack visor$vrHandItem(ServerPlayer player) {
+        ItemStack forced = CommonUtils.FORCED_HAND_ITEM.get();
+        if (forced != null) return forced;
+        if (!VRServerSettings.isTwoHandedVR()) return null;
+        VRPlayer vrPlayer = VisorAPI.getVRPlayer(player);
+        if (vrPlayer != null && vrPlayer.getActiveHand() == HandType.OFFHAND) {
+            return player.getOffhandItem();
+        }
+        return null;
+    }
+
+    @WrapOperation(method = "destroyBlock", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/server/level/ServerPlayer;getMainHandItem()Lnet/minecraft/world/item/ItemStack;"))
+    public ItemStack visor$destroyBlock(ServerPlayer player, Operation<ItemStack> original) {
+        ItemStack item = visor$vrHandItem(player);
+        return item != null ? item : original.call(player);
+    }
+
+    //? if >=1.21 {
+    @WrapOperation(method = "handleBlockBreakAction", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/server/level/ServerPlayer;getMainHandItem()Lnet/minecraft/world/item/ItemStack;"))
+    private ItemStack visor$hitBlockHandItem(ServerPlayer player, Operation<ItemStack> original) {
+        ItemStack item = visor$vrHandItem(player);
+        return item != null ? item : original.call(player);
+    }
+    //?}
+
+    //? if >=1.20.5 {
+    @ModifyExpressionValue(method = "useItemOn", at = @At(value = "FIELD",
+            target = "Lnet/minecraft/world/InteractionHand;MAIN_HAND:Lnet/minecraft/world/InteractionHand;",
+            opcode = Opcodes.GETSTATIC))
+    private InteractionHand visor$vrBlockUseHand(InteractionHand original,
+                                                 @Local(argsOnly = true) ServerPlayer player) {
+        if (!VRServerSettings.isTwoHandedVR()) {
+            return original;
+        }
+        VRPlayer vrPlayer = VisorAPI.getVRPlayer(player);
+        if (vrPlayer == null) {
+            return original;
+        }
+        return vrPlayer.getActiveHand().asInteractionHand();
+    }
+    //?}
+
+    /* ************************* *\
+  //--------BETTER SWINGING--------\\
+    \* ************************* */
+
+    @Inject(method = "tick", at = @At("HEAD"))
+    private void visor$tickCleanupForVanillaMining(CallbackInfo ci) {
+        if (visor$isBetterSwingingNotActive()) return;
+        if (this.hasDelayedDestroy) {
+            if (visor$forgetBlockDamage(this.delayedDestroyPos.asLong())) {
+                visor$sendSwingDamageCleanUp(this.delayedDestroyPos, true);
+            }
+        } else if (this.isDestroyingBlock) {
+            if (visor$forgetBlockDamage(this.destroyPos.asLong())) {
+                visor$sendSwingDamageCleanUp(this.destroyPos, true);
+            }
+        }
+    }
+
+    @Inject(method = "tick", at = @At("TAIL"))
+    private void visor$tickDecayVrDamage(CallbackInfo ci) {
+        if (visor$isBetterSwingingNotActive()) return;
+        List<Long> remove = new ArrayList<>();
+        for (var entry : visor$blockDamage.entrySet()) {
+            long delay = entry.getValue().first();
+            BlockPos pos = BlockPos.of(entry.getKey());
+            BlockState state = level.getBlockState(pos);
+            if (state.isAir() || delay <= 0) {
+                this.level.destroyBlockProgress(this.player.getId(), pos, -1);
+                remove.add(entry.getKey());
+                continue;
+            }
+            entry.getValue().setFirst(delay - 1);
+        }
+        remove.forEach(key -> {
+            visor$forgetBlockDamage(key);
+            visor$sendSwingDamageCleanUp(BlockPos.of(key), false);
+        });
+    }
+
+    @Unique
+    private boolean visor$forgetBlockDamage(long key) {
+        boolean removed = visor$blockDamage.remove(key) != null;
+        return visor$blockDamageStart.remove(key) != null || removed;
+    }
+
+    @Unique
+    @Override
+    public void visor$handleVrBlockDamage(BlockPos blockPos,
+                                          Direction direction,
+                                          int i, int j,
+                                          ItemStack usedItem
+    ) {
+        if (visor$isBetterSwingingNotActive()){
+            VisorAPI.server().getLogger().info("Received BlockSwingDamage " +
+                    "packet while this feature is disabled!");
+            return;
+        }
+        VRServerPlayer vrPlayer = VisorAPI.server().getVRPlayer(player);
+        if (vrPlayer == null) return;
+
+        if (!McVersionUtils.canInteractWithBlock(this.player, blockPos)) {
+            this.debugLogging(blockPos, false, j, "too far");
+            return;
+        } else if (blockPos.getY() >= i) {
+            this.player.connection.send(new ClientboundBlockUpdatePacket(blockPos, this.level.getBlockState(blockPos)));
+            this.debugLogging(blockPos, false, j, "too high");
+            return;
+        }
+
+        BlockState blockState;
+        if (!this.level.mayInteract(this.player, blockPos)) {
+            this.player.connection.send(new ClientboundBlockUpdatePacket(blockPos, this.level.getBlockState(blockPos)));
+            this.debugLogging(blockPos, false, j, "may not interact");
+            return;
+        }
+
+        this.hasDelayedDestroy = false;
+        this.isDestroyingBlock = false;
+        if (this.isCreative()) {
+            this.visor$destroyAndAck(
+                    blockPos, j, "creative destroy",
+                    usedItem
+            );
+            return;
+        }
+
+        if (visor$blockActionRestricted(blockPos, usedItem)) {
+            this.player.connection.send(new ClientboundBlockUpdatePacket(blockPos, this.level.getBlockState(blockPos)));
+            this.debugLogging(blockPos, false, j, "block action restricted");
+            return;
+        }
+
+        float blockDamage = 1.0F;
+        blockState = this.level.getBlockState(blockPos);
+        if (!blockState.isAir()) {
+            blockState.attack(this.level, blockPos, this.player);
+            float savedDamage = 0;
+            PairRecord<Long, Float> savedBlockDamage = visor$blockDamage.get(blockPos.asLong());
+            if (savedBlockDamage != null) {
+                savedDamage = savedBlockDamage.second();
+            }
+            float step = visor$getDestroyProgress(
+                    blockState,
+                    this.player,
+                    this.player.level(),
+                    blockPos, usedItem
+            );
+            Integer startTick = visor$blockDamageStart.get(blockPos.asLong());
+            int elapsed = startTick != null
+                    ? Math.max(0, this.gameTicks - startTick) : 0;
+            float speedFactor = Math.max(0.1F, VRServerSettings.getSwingingMiningSpeed());
+            float allowed = step * (elapsed + visor$MINING_BONUS_TICKS) * speedFactor;
+            blockDamage = Math.max(savedDamage, Math.min(savedDamage + step, allowed));
+        }
+
+        if (!blockState.isAir() && blockDamage >= 1.0F) {
+            this.visor$destroyAndAck(
+                    blockPos, j,
+                    "instant mine",
+                    usedItem
+            );
+        } else {
+            int blockDamageInt = (int) (blockDamage * 10.0F);
+
+            this.level.destroyBlockProgress(this.player.getId(), blockPos, blockDamageInt);
+            //send damage block progress to player who damaged it,
+            //since destroyBlockProgress method ignores this player
+            double d = (double) blockPos.getX() - player.getX();
+            double e = (double) blockPos.getY() - player.getY();
+            double f = (double) blockPos.getZ() - player.getZ();
+            if (d * d + e * e + f * f < 1024.0) {
+                player.connection.send(new ClientboundBlockDestructionPacket(this.player.getId(), blockPos, blockDamageInt));
+            }
+            ServerNetworking.sendPacketToTrackedVRPlayers(
+                    player,
+                    true,
+                    new BlockDamagePayloadToClient(
+                            player.getUUID(),
+                            blockPos,
+                            blockDamageInt
+                    )
+            );
+
+            //save data
+            visor$blockDamage.put(
+                    blockPos.asLong(),
+                    new PairRecord<>(
+                            VRServerSettings.getSwingingRepairDelay(),
+                            blockDamage
+                    )
+            );
+            visor$blockDamageStart.putIfAbsent(blockPos.asLong(), this.gameTicks);
+
+            this.debugLogging(blockPos,
+                    true, j, "actual start of destroying"
+            );
+        }
+    }
+
+    @Unique
+    public void visor$destroyAndAck(BlockPos blockPos,
+                                    int i, String string,
+                                    ItemStack usedItem
+    ) {
+        visor$forgetBlockDamage(blockPos.asLong());
+        visor$sendSwingDamageCleanUp(blockPos, false);
+
+        CommonUtils.withForcedHand(usedItem,
+                () -> this.destroyAndAck(blockPos, i, string));
+    }
+
+    @Unique
+    public boolean visor$blockActionRestricted(BlockPos blockPos, ItemStack itemUsed) {
+        return CommonUtils.withForcedHand(itemUsed,
+                () -> this.player.blockActionRestricted(this.level, blockPos, this.gameModeForPlayer));
+    }
+
+    @Unique
+    private float visor$getDestroyProgress(BlockState blockState,
+                                           Player player,
+                                           BlockGetter blockGetter,
+                                           BlockPos blockPos,
+                                           ItemStack itemUsed
+    ) {
+        return CommonUtils.withForcedHand(itemUsed,
+                () -> blockState.getDestroyProgress(player, blockGetter, blockPos));
+    }
+
+
+
+    @Unique
+    private void visor$sendSwingDamageCleanUp(BlockPos blockPos, boolean onlyVrData) {
+        ServerNetworking.sendPacketToTrackedVRPlayers(
+                player,
+                true,
+                new BlockDamagePayloadToClient(
+                        player.getUUID(),
+                        blockPos,
+                        onlyVrData ? -2 : -1
+                )
+        );
+        if (!onlyVrData) {
+            player.connection.send(
+                    new ClientboundBlockDestructionPacket(
+                            this.player.getId(), blockPos, -1
+                    )
+            );
+        }
+    }
+
+    @Unique
+    private boolean visor$isBetterSwingingNotActive() {
+        if (!VRServerSettings.isBetterSwinging()) return true;
+        VRServerPlayer vrPlayer = VisorAPI.server().getVRPlayer(player);
+        return vrPlayer == null;
+    }
+}

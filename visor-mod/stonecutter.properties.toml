@@ -1,0 +1,265 @@
+# ---- Mod --------------------------------------------------------------------------------------
+mod_id = "visor"
+mod_name = "Visor"
+mod_group = "org.vmstudio"
+mod_authors = "PhoenixRa"
+mod_description = "Next-Gen VR core mod for Minecraft. Based on OpenXR. Built as a platform. Supports addons, customizing your VR experience"
+mod_api_description = "The Visor API. Not a mod! Use only in a development as a dependency."
+mod_license = "MPL-2.0"
+
+# ---- Common dependencies ----------------------------------------------------------------------
+fabric_loader_version = "0.16.14"
+fabric_loader_version_range = ">=0.14.14"
+atumvr_source         = "local"   # "local" = <root>/libs, "maven" = external repository
+atumvr_version        = "1.14.0beta-snapshot#27"
+atumconfig_version    = "1.2.0pre3"
+lwjgl_version         = "3.3.6"
+mixin_extras_version  = "0.4.1"
+# Forge 50 and NeoForge 20.6 ship Mixin 0.8.5, which knows no level above JAVA_18
+mixin_compat_level    = 17
+lombok_version        = "1.18.46"
+jetbrains_annotations_version = "26.1.0"
+
+# ---- Version Targets --------------------------------------------------------------------------
+[targets]
+"1.20.1" = ["fabric", "forge"]
+"1.20.2" = ["fabric", "forge", "neoforge"]
+"1.20.4" = ["fabric", "forge", "neoforge"]
+"1.20.6" = ["fabric", "forge", "neoforge"]
+"1.21.1" = ["fabric", "forge", "neoforge"]
+"1.21.3" = ["fabric", "forge", "neoforge"]
+"1.21.4" = ["fabric", "forge", "neoforge"]
+"1.21.5" = ["fabric", "forge", "neoforge"]
+"1.21.8" = ["fabric", "forge", "neoforge"]
+"1.21.10" = ["fabric", "forge", "neoforge"]
+"1.21.11" = ["fabric", "forge", "neoforge"]
+"26.1.2" = ["fabric", "forge", "neoforge"]
+"26.2" = ["fabric", "forge", "neoforge"]
+"26.3" = ["fabric", "forge", "neoforge"]
+
+# ---- Version dependencies ---------------------------------------------------------------------
+["1.20.1"]
+# 1.20 - 1.20.1
+java_version = 17
+pack_format = 15
+minecraft_version_range_fabric = ">=1.20 <1.20.2"
+minecraft_version_range_forgelike = "[1.20,1.20.1]"
+parchment_version = "2023.09.03"
+fabric_api_version = "0.92.3"
+forge_version = "47.4.0"
+forge_version_range = "[47,)"
+sodium_version = "mc1.20.1-0.5.8"
+iris_version = "1.7.1+1.20.1"
+
+["1.20.2"]
+# 1.20.2
+java_version = 17
+pack_format = 18
+minecraft_version_range_fabric = ">=1.20.2 <1.20.3"
+minecraft_version_range_forgelike = "[1.20.2]"
+parchment_version = "2023.12.10"
+fabric_api_version = "0.91.6"
+forge_version = "48.1.0"
+forge_version_range = "[48,)"
+neoforge_version = "20.2.93"
+neoforge_version_range = "[20.2,)"
+sodium_version = "mc1.20.2-0.5.5"
+iris_version = "1.7.1+1.20.1"
+
+["1.20.4"]
+# 1.20.3 - 1.20.4
+java_version = 17
+pack_format = 22
+minecraft_version_range_fabric = ">=1.20.3 <1.20.5"
+minecraft_version_range_forgelike = "[1.20.3,1.20.4]"
+parchment_version = "2024.04.14"
+fabric_api_version = "0.97.3"
+forge_version = "49.2.9"
+forge_version_range = "[49,)"
+neoforge_version = "20.4.251"
+neoforge_version_range = "[20.4,)"
+sodium_version = "mc1.20.4-0.5.8"
+iris_version = "1.7.2+1.20.4"
+
+["1.20.6"]
+# 1.20.5 - 1.20.6
+java_version = 21
+pack_format = 32
+minecraft_version_range_fabric = ">=1.20.5 <1.21"
+minecraft_version_range_forgelike = "[1.20.5,1.20.6]"
+parchment_version = "2024.06.16"
+fabric_api_version = "0.100.8"
+forge_version = "50.2.10"
+forge_version_range = "[50,)"
+neoforge_version = "20.6.141"
+neoforge_version_range = "[20.6,)"
+sodium_version = "mc1.20.6-0.5.11"
+iris_version = "1.7.2+1.20.6"
+
+["1.21.1"]
+# 1.21 - 1.21.1
+java_version = 21
+pack_format = 34
+minecraft_version_range_fabric = ">=1.21 <1.21.2"
+minecraft_version_range_forgelike = "[1.21,1.21.1]"
+parchment_version = "2024.11.17"
+fabric_api_version = "0.116.17"
+forge_version = "52.1.16"
+forge_version_range = "[52,)"
+neoforge_version = "21.1.250"
+neoforge_version_range = "[21.1,)"
+sodium_version = "mc1.21.1-0.6.13-fabric"
+iris_version = "1.8.8+1.21.1-fabric"
+
+["1.21.3"]
+# 1.21.2 - 1.21.3
+java_version = 21
+pack_format = 42
+minecraft_version_range_fabric = ">=1.21.2 <1.21.4"
+minecraft_version_range_forgelike = "[1.21.3]"
+parchment_version = "2024.12.07"
+fabric_api_version = "0.114.1"
+forge_version = "53.1.12"
+forge_version_range = "[53,)"
+neoforge_version = "21.3.97"
+neoforge_version_range = "[21.3,)"
+sodium_version = "mc1.21.3-0.6.13-fabric"
+iris_version = "1.8.1+1.21.3-fabric"
+
+["1.21.4"]
+# 1.21.4
+java_version = 21
+pack_format = 46
+minecraft_version_range_fabric = ">=1.21.4 <1.21.5"
+minecraft_version_range_forgelike = "[1.21.4]"
+parchment_version = "2025.03.23"
+fabric_api_version = "0.119.4"
+forge_version = "54.1.18"
+forge_version_range = "[54,)"
+neoforge_version = "21.4.157"
+neoforge_version_range = "[21.4,)"
+sodium_version = "mc1.21.4-0.6.13-fabric"
+iris_version = "1.8.8+1.21.4-fabric"
+
+["1.21.5"]
+# 1.21.5
+java_version = 21
+pack_format = 55
+minecraft_version_range_fabric = ">=1.21.5 <1.21.6"
+minecraft_version_range_forgelike = "[1.21.5]"
+parchment_version = "2025.06.15"
+fabric_api_version = "0.128.2"
+forge_version = "55.1.13"
+forge_version_range = "[55,)"
+neoforge_version = "21.5.98"
+neoforge_version_range = "[21.5,)"
+sodium_version = "mc1.21.5-0.6.13-fabric"
+iris_version = "1.8.11+1.21.5-fabric"
+
+["1.21.8"]
+# 1.21.6 - 1.21.8
+java_version = 21
+pack_format = 64
+minecraft_version_range_fabric = ">=1.21.6 <1.21.9"
+minecraft_version_range_forgelike = "[1.21.6,1.21.8]"
+parchment_version = "2025.09.14"
+fabric_api_version = "0.136.1"
+forge_version = "58.1.22"
+forge_version_range = "[56,)"
+neoforge_version = "21.8.54"
+neoforge_version_range = "[21.7.0-beta,)"
+sodium_version = "mc1.21.8-0.7.3-fabric"
+iris_version = "1.9.6+1.21.8-fabric"
+
+["1.21.10"]
+# 1.21.9 - 1.21.10
+java_version = 21
+fabric_loader_version = "0.17.3"
+fabric_loader_version_range = ">=0.17.0"
+pack_format = 69
+data_pack_format = 88
+minecraft_version_range_fabric = ">=1.21.9 <1.21.11"
+minecraft_version_range_forgelike = "[1.21.9,1.21.10]"
+parchment_version = "2025.10.12"
+fabric_api_version = "0.138.4"
+forge_version = "60.1.15"
+forge_version_range = "[59,)"
+neoforge_version = "21.10.64"
+neoforge_version_range = "[21.9.0-beta,)"
+sodium_version = "mc1.21.10-0.7.3-fabric"
+iris_version = "1.9.7+1.21.10-fabric"
+
+["1.21.11"]
+# 1.21.11
+java_version = 21
+fabric_loader_version = "0.17.3"
+fabric_loader_version_range = ">=0.17.3"
+pack_format = 75
+data_pack_format = 94
+minecraft_version_range_fabric = ">=1.21.11 <1.21.12"
+minecraft_version_range_forgelike = "[1.21.11]"
+parchment_version = "2025.12.20"
+fabric_api_version = "0.141.6"
+forge_version = "61.2.1"
+forge_version_range = "[61,)"
+neoforge_version = "21.11.45"
+neoforge_version_range = "[21.11,)"
+sodium_version = "mc1.21.11-0.8.14-fabric"
+iris_version = "1.10.7+1.21.11-fabric"
+
+["26.1.2"]
+# 26.1 - 26.1.2
+java_version = 25
+fabric_loader_version = "0.18.4"
+fabric_loader_version_range = ">=0.18.4"
+lwjgl_version = "3.4.1"
+mixin_extras_version = "0.5.4"
+pack_format = 84
+data_pack_format = 101
+minecraft_version_range_fabric = ">=26.1 <26.2"
+minecraft_version_range_forgelike = "[26.1,26.1.2]"
+fabric_api_version = "0.155.3"
+forge_version = "64.1.2"
+forge_version_range = "[62,)"
+neoforge_version = "26.1.2.97"
+neoforge_version_range = "[26.1.0.1-beta,)"
+sodium_version = "mc26.1.2-0.9.2-fabric"
+iris_version = "1.11.4+26.1-fabric"
+
+["26.2"]
+# 26.2
+java_version = 25
+fabric_loader_version = "0.19.5"
+fabric_loader_version_range = ">=0.19.5"
+lwjgl_version = "3.4.1"
+mixin_extras_version = "0.5.4"
+pack_format = 88
+data_pack_format = 107
+minecraft_version_range_fabric = ">=26.2 <26.3"
+minecraft_version_range_forgelike = "[26.2]"
+fabric_api_version = "0.161.0"
+forge_version = "65.1.3"
+forge_version_range = "[65,)"
+neoforge_version = "26.2.0.88"
+neoforge_version_range = "[26.2.0.1-beta,)"
+sodium_version = "mc26.2-0.9.2-fabric"
+iris_version = "1.11.4+26.2-fabric"
+
+["26.3"]
+# 26.3
+java_version = 25
+fabric_loader_version = "0.19.5"
+fabric_loader_version_range = ">=0.19.5"
+lwjgl_version = "3.4.3"
+mixin_extras_version = "0.5.4"
+pack_format = 97
+data_pack_format = 121
+minecraft_version_range_fabric = ">=26.3 <26.4"
+minecraft_version_range_forgelike = "[26.3]"
+fabric_api_version = "0.161.0"
+forge_version = "66.0.8"
+forge_version_range = "[66,)"
+neoforge_version = "26.3.0.39-beta"
+neoforge_version_range = "[26.3.0.1-beta,)"
+sodium_version = "mc26.3-0.9.2-fabric"
+iris_version = "1.11.7+26.3-fabric"

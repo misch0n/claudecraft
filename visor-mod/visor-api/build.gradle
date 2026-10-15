@@ -1,0 +1,28 @@
+// Build script of every ":visor-api:<mc>" subproject.
+plugins {
+    id "visor.minecraft"
+}
+
+dependencies {
+    // @Environment annotation and mixin extras
+    modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
+
+    modApi atumvr("api")
+    modApi atumvr("core")
+    api "com.github.Phoenix-Ra:AtumConfiguration:${atumconfig_version}"
+}
+
+if (!unobfuscated) {
+    tasks.named("remapJar") { enabled = false }
+    tasks.named("remapSourcesJar") { enabled = false }
+}
+
+configurations {
+    apiJava      { canBeConsumed = true; canBeResolved = false }
+    apiResources { canBeConsumed = true; canBeResolved = false }
+}
+afterEvaluate {
+    def generate = tasks.named("stonecutterGenerate")
+    sourceSets.main.java.srcDirs.each { dir -> artifacts.add("apiJava", dir) { builtBy generate } }
+    sourceSets.main.resources.srcDirs.each { dir -> artifacts.add("apiResources", dir) { builtBy generate } }
+}

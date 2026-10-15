@@ -1,0 +1,128 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+
+// Build script of every ":visor-forge:<mc>" subproject.
+plugins {
+    id "visor.loader"
+}
+
+// Atum Configuration for Dev Runtime on Forge
+configurations {
+    atumConfigRaw { canBeConsumed = false; canBeResolved = true; transitive = false }
+}
+dependencies {
+    atumConfigRaw "com.github.Phoenix-Ra.AtumConfiguration:atumconfig-core:${atumconfig_version}"
+}
+def devAtumConfigJar = tasks.register("devAtumConfigJar", ShadowJar) {
+    description = "Relocated AtumConfiguration for the Forge dev runtime"
+    configurations = [project.configurations.atumConfigRaw]
+    archiveBaseName = "atumconfig-dev"
+    archiveVersion = ""
+    archiveClassifier = ""
+    destinationDirectory = layout.buildDirectory.dir("dev-runtime")
+    ["com.google.gson": "gson", "org.yaml.snakeyaml": "snakeyaml", "com.google.errorprone": "errorprone"].each { pkg, alias ->
+        relocate pkg, "me.phoenixra.atumconfig.libs.${alias}"
+    }
+    exclude "META-INF/versions/**", "module-info.class"
+}
+// LWJGL for the Forge dev runtime
+configurations {
+    lwjglRaw { canBeConsumed = false; canBeResolved = true; transitive = false }
+}
+dependencies {
+    lwjglRaw "org.lwjgl:lwjgl-openxr:${lwjgl_version}"
+    lwjglRaw "org.lwjgl:lwjgl-openxr:${lwjgl_version}:natives-linux"
+    lwjglRaw "org.lwjgl:lwjgl-openxr:${lwjgl_version}:natives-linux-arm64"
+    lwjglRaw "org.lwjgl:lwjgl-openxr:${lwjgl_version}:natives-windows"
+    if (bundlesVulkan) {
+        lwjglRaw "org.lwjgl:lwjgl-vulkan:${lwjgl_version}"
+    }
+}
+def devNativesJar = tasks.register("devNativesJar", Jar) {
+    description = "LWJGL OpenXR and Vulkan without module-info, for the Forge dev runtime"
+    archiveBaseName = "lwjgl-visor-dev"
+    archiveVersion = ""
+    archiveClassifier = ""
+    destinationDirectory = layout.buildDirectory.dir("dev-runtime")
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from { configurations.lwjglRaw.collect { zipTree(it) } }
+    // LWJGL keeps its only module descriptor under META-INF/versions/11, so the whole
+    // directory goes - and with it the Multi-Release manifests, or securejarhandler would
+    // look for a path that is no longer there.
+    exclude "META-INF/versions/**", "META-INF/MANIFEST.MF",
+            "META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA"
+}
+//------
+
+// Forge's early display needs lwjgl-tinyfd, no game library on 26.3: as a client library it stays off the dev server run
+if (stonecutter.eval(minecraft_version, ">=26.3")) {
+    dependencies {
+        minecraftClientRuntimeLibraries "org.lwjgl:lwjgl-tinyfd:${lwjgl_version}"
+    }
+}
+
+//excluding unnecessary stuff for Dev runtime
+configurations.runtimeClasspath {
+    exclude group: "com.github.Phoenix-Ra", module: "AtumConfiguration"
+    exclude group: "com.github.Phoenix-Ra.AtumConfiguration"
+
+    if (!unobfuscated) {
+        exclude group: "com.github.Phoenix-Ra.AtumVR"
+        exclude module: "atumvr-api-${atumvr_version}"
+        exclude module: "atumvr-core-${atumvr_version}"
+    }
+}
+
+if (unobfuscated) {
+    configurations {
+        fabricAnnotations { canBeConsumed = false; canBeResolved = true; transitive = false }
+    }
+    sourceSets.main.compileClasspath += configurations.fabricAnnotations
+}
+
+dependencies {
+    forge "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+
+    // We need it for @Environment annotation, to mark methods/classes
+    // Forge ignores this annotation, but addons will see
+    add(unobfuscated ? "fabricAnnotations" : "compileOnly", "net.fabricmc:fabric-loader:${fabric_loader_version}") { transitive = false }
+
+    // Forge 1.20.1 use Mixin 0.8.5, which has no @Inject(order = ..) The shared sources use it,
+    // so compile against the 0.8.7 annotations; Forge's runtime simply ignores the extra attribute.
+    compileOnly("dev.architectury:mixin-patched:0.8.7.12") { transitive = false }
+
+    compileOnly(annotationProcessor("io.github.llamalad7:mixinextras-common:${mixin_extras_version}"))
+    implementation(include("io.github.llamalad7:mixinextras-forge:${mixin_extras_version}"))
+
+    //Natives
+    forgeRuntimeLibrary files(devNativesJar)
+
+    shadowBundle("org.lwjgl:lwjgl-openxr:${lwjgl_version}") { transitive = false }
+    shadowBundle("org.lwjgl:lwjgl-openxr:${lwjgl_version}:natives-linux") { transitive = false }
+    shadowBundle("org.lwjgl:lwjgl-openxr:${lwjgl_version}:natives-linux-arm64") { transitive = false }
+    shadowBundle("org.lwjgl:lwjgl-openxr:${lwjgl_version}:natives-windows") { transitive = false }
+    if (bundlesVulkan) {
+        shadowBundle("org.lwjgl:lwjgl-vulkan:${lwjgl_version}") { transitive = false }
+    }
+
+    // Dev Runtime
+    forgeRuntimeLibrary(atumvr("api")) { transitive = false }
+    forgeRuntimeLibrary(atumvr("core")) { transitive = false }
+    forgeRuntimeLibrary files(devAtumConfigJar)
+}
+
+loom {
+    forge {
+        convertAccessWideners(modJar, loom.accessWidenerPath.get().asFile.name)
+
+        mixinConfig "${mod_id}.mixins.json"
+        mixinConfig "${mod_id}.sodium.mixins.json"
+        mixinConfig "${mod_id}.replaymod.mixins.json"
+        mixinConfig "${mod_id}.flashback.mixins.json"
+        mixinConfig "${mod_id}.dh.mixins.json"
+        mixinConfig "${mod_id}.dynamicfps.mixins.json"
+        mixinConfig "${mod_id}.iris.mixins.json"
+        mixinConfig "${mod_id}.blur.mixins.json"
+        mixinConfig "${mod_id}.create.mixins.json"
+        mixinConfig "${mod_id}.mixins.forge.json"
+    }
+}

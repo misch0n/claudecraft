@@ -1,0 +1,27 @@
+{
+  "required": true,
+  "package": "org.vmstudio.visor.compatibility.iris.mixin",
+  "plugin": "org.vmstudio.visor.MixinConfig",
+  "compatibilityLevel": "JAVA_${mixin_compat_level}",
+  "refmap": "${mod_id}.refmap.json",
+  "server": [
+  ],
+  "minVersion": "0.8.4",
+  "client": [
+    "CustomUniformsMixin",
+    "IrisCameraUniformsMixin",
+    "IrisChunkProgramOverridesMixin",
+    "PipelineManagerMixin",
+    "IrisProgramUniformsMixin",
+    "IrisRenderingPipelineVRMixin",
+    "IrisShadowMatricesMixin",
+    "IrisFrameCounterMixin",
+    "IrisTimerMixin",
+    "JcppProcessorVRMixin",
+    "dh.IrisDhCompatVRMixin",
+    "dh.IrisLodRenderProgramVRMixin",
+    "coderbot.PipelineManagerMixin",
+    "coderbot.NewWorldRenderingPipelineVRMixin",
+    "coderbot.IrisChunkProgramOverridesMixin"
+  ]
+}

@@ -1,0 +1,70 @@
+#version 150
+#ifdef VISOR_SPIRV
+#extension GL_ARB_separate_shader_objects : require
+#extension GL_ARB_explicit_attrib_location : require
+#define VISOR_LOCATION(n) layout(location = n)
+#else
+#define VISOR_LOCATION(n)
+#endif
+/*
+MIT License
+
+Copyright (c) 2020 Bradley Qu
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+VISOR_LOCATION(0) in vec3 Position;
+
+#ifdef VISOR_UBO
+// 1.21.6 feeds the matrices through the engine's std140 blocks, declared like vanilla's gui.vsh does
+layout(std140) uniform DynamicTransforms {
+    mat4 ModelViewMat;
+    vec4 ColorModulator;
+    vec3 ModelOffset;
+    mat4 TextureMat;
+};
+layout(std140) uniform Projection {
+    mat4 ProjMat;
+};
+#else
+uniform mat4 ModelViewMat;
+uniform mat4 ProjMat;
+#endif
+
+// a 1.21.5 pipeline cannot declare a mat3 uniform, McShaderProgram widens it and sets the define
+#ifdef VISOR_UBO
+layout(std140) uniform VisorUniforms {
+    mat4 IViewRotMat;
+    float GameTime;
+    int EndPortalLayers;
+};
+#elif defined(VISOR_MAT3_AS_MAT4)
+uniform mat4 IViewRotMat;
+#else
+uniform mat3 IViewRotMat;
+#endif
+
+VISOR_LOCATION(0) out vec3 pos;
+
+void main() {
+gl_Position = ProjMat * ModelViewMat * vec4(Position, 1.0);
+
+pos = mat3(IViewRotMat) * Position;
+}

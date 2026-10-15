@@ -1,0 +1,208 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+
+/* Plugin applied to the MOD LOADER subprojects */
+plugins {
+    id "visor.minecraft"
+    id "com.gradleup.shadow"
+}
+
+def loader = branch
+def apiPath = ":visor-api:${minecraft_version}"
+def corePath = ":visor-core:${minecraft_version}"
+
+// ---- Shared sources ------------------------------------------------------------------------
+configurations {
+    apiJava       { canBeConsumed = false; canBeResolved = true }
+    apiResources  { canBeConsumed = false; canBeResolved = true }
+    coreJava      { canBeConsumed = false; canBeResolved = true }
+    coreResources { canBeConsumed = false; canBeResolved = true }
+    // Libraries the API exposes
+    apiBundle     { canBeConsumed = false; canBeResolved = true }
+    // Everything bundled into the mod jar
+    shadowBundle  { canBeConsumed = false; canBeResolved = true; extendsFrom apiBundle }
+}
+
+dependencies {
+    compileOnly project(path: apiPath, configuration: "namedElements")
+    compileOnly project(path: corePath, configuration: "namedElements")
+    apiJava       project(path: apiPath, configuration: "apiJava")
+    apiResources  project(path: apiPath, configuration: "apiResources")
+    coreJava      project(path: corePath, configuration: "coreJava")
+    coreResources project(path: corePath, configuration: "coreResources")
+
+    // Compile-time stubs of optional mods' internals, never shipped
+    compileOnly project(":visor-core:stubs")
+
+    // Optional mods the core mixins target
+    modCompileOnly "maven.modrinth:sodium:${sodium_version}"
+    modCompileOnly("maven.modrinth:iris:${iris_version}") { transitive = false }
+
+    modImplementation atumvr("api")
+    modImplementation atumvr("core")
+    apiBundle(atumvr("api")) { transitive = false }
+    apiBundle(atumvr("core")) { transitive = false }
+
+    implementation "com.github.Phoenix-Ra:AtumConfiguration:${atumconfig_version}"
+    apiBundle "com.github.Phoenix-Ra:AtumConfiguration:${atumconfig_version}"
+}
+
+
+def mcversion = mcversionCoreLayout()
+def mcversionSpec = mcversion.excludeSpec(minecraft_version)
+def mcversionParked = mcversion.parkedSources(project, minecraft_version)
+compileJava {
+    dependsOn configurations.apiJava, configurations.coreJava
+    source configurations.apiJava, configurations.coreJava, mcversionParked
+    exclude { element -> mcversionSpec.isSatisfiedBy(element) }
+}
+processResources {
+    dependsOn configurations.apiResources, configurations.coreResources
+    from configurations.apiResources, configurations.coreResources
+}
+sourcesJar {
+    from configurations.apiJava, configurations.coreJava, mcversionParked
+    exclude { element -> mcversionSpec.isSatisfiedBy(element) }
+}
+
+// ---- Mod jar pipeline -----------------------------------------------------------------------
+
+def relocations = [
+        "org.yaml.snakeyaml"   : "snakeyaml",
+        "org.tomlj"            : "tomlj",
+        "org.antlr"            : "antlr",
+        "org.checkerframework" : "checkerframework",
+        "com.google.gson"      : "gson",
+        "com.google.errorprone": "errorprone",
+        "redempt.crunch"       : "crunch",
+]
+def bundleLibraries = { ShadowJar task, Configuration bundle ->
+    task.configurations = [bundle]
+    task.duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    relocations.each { original, alias -> task.relocate original, "${mod_group}.${mod_id}.libs.${alias}" }
+    // NEVER exclude META-INF/versions/**: Forge and Neoforge need it
+    task.exclude "META-INF/maven/**", "META-INF/proguard/**", "module-info.class"
+}
+
+shadowJar { task ->
+    archiveClassifier = unobfuscated ? "" : "dev-shadow"
+    bundleLibraries(task, project.configurations.shadowBundle)
+}
+
+if (unobfuscated) {
+    jar {
+        archiveClassifier = "dev"
+        destinationDirectory = layout.buildDirectory.dir("devlibs")
+    }
+    loom.nestJars(tasks.named("shadowJar"), configurations.named("include"))
+} else {
+    remapJar {
+        dependsOn shadowJar
+        inputFile = shadowJar.archiveFile        // remap the bundled jar, not the plain one
+    }
+}
+project.ext.modJar = tasks.named(unobfuscated ? "shadowJar" : "remapJar")
+
+// ---- API jar --------------------------------------------------------------------------------
+def apiPackage = "org/vmstudio/visor/api/**"
+
+tasks.register("processApiResources", Sync) {
+    from(project.parent.file("src/apijar")) { expand(resourcePlaceholders) }
+    from(visorAccessWidener)
+    into layout.buildDirectory.dir("apijar")
+    inputs.properties(resourcePlaceholders)
+}
+
+
+tasks.register("apiJar", ShadowJar) { task ->
+    from(sourceSets.main.output) { include apiPackage }
+    from(processApiResources)
+    archiveClassifier = unobfuscated ? "api" : "api-dev"
+    bundleLibraries(task, project.configurations.apiBundle)
+}
+
+if (!unobfuscated) {
+    tasks.register("remapApiJar", net.fabricmc.loom.task.RemapJarTask) {
+        dependsOn apiJar
+        inputFile = apiJar.archiveFile
+        archiveClassifier = "api"
+        addNestedDependencies = false
+        classpath.from(sourceSets.main.compileClasspath)   // the remapper needs the class hierarchy
+    }
+}
+project.ext.apiModJar = tasks.named(unobfuscated ? "apiJar" : "remapApiJar")
+
+if (unobfuscated && loader == "fabric") {
+    [modJar, apiModJar].each { shipped ->
+        shipped.configure { manifest.attributes("Fabric-Mapping-Namespace": "official") }
+    }
+}
+
+tasks.named("build") { dependsOn modJar, apiModJar }
+
+// ---- Running --------------------------------------------------------------------------------
+loom {
+    mods {
+        create(mod_id) { sourceSet sourceSets.main }
+    }
+    runs {
+        configureEach {
+            preferGradleTask = true
+            ideConfigGenerated stonecutter.current.active
+            configName = "${loader.capitalize()} ${minecraft_version} ${name}"
+            runDir "../../../run/${loader}/${minecraft_version}/${name}"
+            // -PvisorRenderSelfTest: draw through the render seam at the title screen and read the pixels back
+            if (project.hasProperty("visorRenderSelfTest")) {
+                vmArg "-Dvisor.renderSelfTest=true"
+            }
+        }
+    }
+}
+
+// ---- Mixin config check ---------------------------------------------------------------------
+tasks.register("checkMixinConfigs") {
+    description = "Verifies that every mixin listed in the mixin configs was compiled for this node"
+    dependsOn "classes"
+    def classesDirs = sourceSets.main.output.classesDirs
+    def resourcesDir = sourceSets.main.output.resourcesDir
+    doLast {
+        def missing = []
+        fileTree(resourcesDir) { include "*.mixins.json", "*.mixins.*.json" }.each { json ->
+            def config = new groovy.json.JsonSlurper().parse(json)
+            def pkg = config.package.replace('.', '/')
+            ["mixins", "client", "server"].each { key ->
+                (config[key] ?: []).each { name ->
+                    if (!classesDirs.any { new File(it, "${pkg}/${name.replace('.', '/')}.class").file }) {
+                        missing << "${json.name}: ${name}"
+                    }
+                }
+            }
+        }
+        if (missing) {
+            throw new GradleException("Mixin classes missing for ${project.path}:\n  " + missing.join("\n  "))
+        }
+    }
+}
+tasks.named("check") { dependsOn "checkMixinConfigs" }
+
+// ---- Build ----------------------------------------------------------------------------------
+tasks.register("buildAndCollect", Copy) {
+    group = "build"
+    description = "Builds the ${loader} ${minecraft_version} mod and API jars and copies them to <root>/build/libs"
+    dependsOn "build"
+    // fabric for some reason has incorrect timestamp without this
+    // (when u built and see lastChange to fabric jar was a while ago is annoying)
+    outputs.upToDateWhen { false }
+    def marker = "+mc${minecraft_version}-${loader}"
+    def current = "${base.archivesName.get()}-${mod_version}+"
+    doFirst {
+        // previous builds of this target and every jar of another mod version
+        def dir = rootProject.layout.buildDirectory.dir("libs").get().asFile
+        dir.listFiles()?.each { f ->
+            if (f.name.endsWith(".jar") && (f.name.contains(marker) || !f.name.startsWith(current))) {
+                f.delete()
+            }
+        }
+    }
+    from(modJar.flatMap { it.archiveFile }, apiModJar.flatMap { it.archiveFile })
+    into(rootProject.layout.buildDirectory.dir("libs"))
+}

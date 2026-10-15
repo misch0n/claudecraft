@@ -1,0 +1,29 @@
+// Build script of every ":visor-fabric:<mc>" subproject.
+plugins {
+    id "visor.loader"
+}
+
+def fabricApiVersion = "${fabric_api_version}+${minecraft_version}"
+
+dependencies {
+    modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
+    modApi "net.fabricmc.fabric-api:fabric-api:${fabricApiVersion}"
+
+    // Natives
+    include(implementation("org.lwjgl:lwjgl-openxr:${lwjgl_version}") { transitive = false })
+    include(implementation("org.lwjgl:lwjgl-openxr:${lwjgl_version}:natives-linux") { transitive = false })
+    include(implementation("org.lwjgl:lwjgl-openxr:${lwjgl_version}:natives-linux-arm64") { transitive = false })
+    include(implementation("org.lwjgl:lwjgl-openxr:${lwjgl_version}:natives-windows") { transitive = false })
+    if (bundlesVulkan) {
+        include(implementation("org.lwjgl:lwjgl-vulkan:${lwjgl_version}") { transitive = false })
+    }
+
+    //Fabric
+    include(modImplementation(fabricApi.module("fabric-api-base", fabricApiVersion)))
+    include(modImplementation(fabricApi.module("fabric-resource-loader-v0", fabricApiVersion)))
+    include(modImplementation(fabricApi.module("fabric-command-api-v2", fabricApiVersion)))
+}
+
+loom {
+    injectAccessWidener(modJar)
+}

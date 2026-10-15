@@ -1,0 +1,213 @@
+package org.vmstudio.visor.mixin.client.multiplayer;
+
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.multiplayer.prediction.PredictiveAction;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ServerGamePacketListener;
+import org.objectweb.asm.Opcodes;
+import org.spongepowered.asm.mixin.Shadow;
+import org.vmstudio.visor.api.client.player.pose.VRPlayerPoseClient;
+import org.vmstudio.visor.api.client.player.pose.PlayerPoseType;
+import org.vmstudio.visor.api.common.HandType;
+import org.vmstudio.visor.api.server.VRServerSettings;
+import org.vmstudio.visor.api.compatibility.ItemClassifier;
+import org.vmstudio.visor.core.client.ClientContext;
+import org.vmstudio.visor.core.client.VisorState;
+import org.vmstudio.visor.core.client.player.VRAimPicker;
+import org.vmstudio.visor.core.client.network.ClientNetworking;
+import net.minecraft.client.multiplayer.MultiPlayerGameMode;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.BowItem;
+import net.minecraft.world.item.CrossbowItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.PotionItem;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
+
+import org.joml.Vector3f;
+import org.spongepowered.asm.mixin.Mixin;
+
+import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+import static org.vmstudio.visor.core.client.VisorClientImpl.MC;
+
+
+@Mixin(MultiPlayerGameMode.class)
+public abstract class MultiPlayerGameModeMixin {
+
+    @Shadow
+    private ItemStack destroyingItem;
+
+
+    /* ***************************************** *\
+  //--------TWO HANDED VR (OFFHAND SUPPORT)--------\\
+    \* ***************************************** */
+
+    @WrapOperation(method = "sameDestroyTarget", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/player/LocalPlayer;getMainHandItem()Lnet/minecraft/world/item/ItemStack;"))
+    public ItemStack visor$sameDestroyTarget(LocalPlayer player, Operation<ItemStack> original) {
+        return visor$isOffhandUsed() ? player.getOffhandItem() : original.call(player);
+    }
+
+    @WrapOperation(
+            method = "startDestroyBlock", // Target the synthetic lambda method
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/multiplayer/MultiPlayerGameMode;startPrediction(Lnet/minecraft/client/multiplayer/ClientLevel;Lnet/minecraft/client/multiplayer/prediction/PredictiveAction;)V"
+            )
+    )
+    public void visor$startDestroyBlock(MultiPlayerGameMode instance,
+                                        ClientLevel clientLevel,
+                                        PredictiveAction predictiveAction,
+                                        Operation<Void> original
+    ) {
+        if(VisorState.get().isNotActive()) {
+            original.call(instance, clientLevel, predictiveAction);
+            return;
+        }
+        original.call(instance, clientLevel, (PredictiveAction) (i) -> {
+            Packet<ServerGamePacketListener> packet = predictiveAction.predict(i);
+            destroyingItem = visor$getUsedItem(MC.player);
+            return packet;
+        });
+    }
+
+    @WrapOperation(method = "destroyBlock", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/player/LocalPlayer;getMainHandItem()Lnet/minecraft/world/item/ItemStack;"))
+    public ItemStack visor$destroyBlock(LocalPlayer player, Operation<ItemStack> original) {
+        return visor$isOffhandUsed() ? player.getOffhandItem() : original.call(player);
+    }
+
+
+
+    /* ************************** *\
+  //--------PLAYER LOOK POSE--------\\
+    \* ************************** */
+    @Inject(at = @At("HEAD"), method = "useItem")
+    public void visor$ensureUseDirection1(Player player,
+                                          InteractionHand hand,
+                                          CallbackInfoReturnable<InteractionResult> cir
+    ) {
+        if (VisorState.get().isActive()) {
+            ClientNetworking.sendLookPacket(player,
+                    visor$getRightClickLook(
+                                    player,
+                                    hand == InteractionHand.MAIN_HAND ?
+                                            HandType.MAIN : HandType.OFFHAND
+                            )
+            );
+        }
+    }
+
+    @Inject(at = @At("HEAD"), method = "releaseUsingItem")
+    public void visor$ensureUseDirection2(Player player, CallbackInfo ci) {
+        if (VisorState.get().isActive()) {
+            ClientNetworking.sendLookPacket(player,
+                    visor$getRightClickLook(
+                                    player,
+                                    player.getUsedItemHand() == InteractionHand
+                                            .MAIN_HAND ?
+                                            HandType.MAIN
+                                            : HandType.OFFHAND
+                            )
+            );
+        }
+    }
+
+    @Inject(at = @At("HEAD"), method = "useItemOn")
+    public void visor$ensureUseDirection3(LocalPlayer player, InteractionHand interactionHand,
+                                          BlockHitResult result, CallbackInfoReturnable<InteractionResult> cir
+    ) {
+        if (VisorState.get().isActive()) {
+            ClientNetworking.sendLookPacket(
+                    player,
+                    result.getLocation()
+                            .subtract(
+                                    player.getEyePosition(1.0F)
+                            ).normalize()
+            );
+        }
+    }
+
+
+    //? if >=1.20.5 {
+    @ModifyExpressionValue(method = "performUseItemOn", at = @At(value = "FIELD",
+            target = "Lnet/minecraft/world/InteractionHand;MAIN_HAND:Lnet/minecraft/world/InteractionHand;",
+            opcode = Opcodes.GETSTATIC))
+    private InteractionHand visor$vrBlockUseHand(InteractionHand original) {
+        if (VisorState.get().isNotActive() || !VRServerSettings.isTwoHandedVR()) {
+            return original;
+        }
+        return ClientContext.localPlayer.getActiveHand().asInteractionHand();
+    }
+    //?}
+
+
+    /* ************************* *\
+  //--------UTILITY METHODS--------\\
+    \* ************************* */
+
+    @Unique
+    public ItemStack visor$getUsedItem(Player player) {
+        return visor$isOffhandUsed() ? player.getOffhandItem() : player.getMainHandItem();
+    }
+
+    @Unique
+    private boolean visor$isOffhandUsed() {
+        return VisorState.get().isActive()
+                && VRServerSettings.isTwoHandedVR()
+                && ClientContext.localPlayer.getActiveHand() == HandType.OFFHAND;
+    }
+
+    @Unique
+    public Vec3 visor$getRightClickLook(Player player,
+                                       HandType handType) {
+        // Start with the player's default look direction.
+        Vec3 lookDirection = player.getLookAngle();
+
+        // If a custom cross vector is available, adjust the look direction accordingly.
+        Vec3 aimHitPos = VRAimPicker.getAimHitPos();
+        if (aimHitPos != null) {
+            lookDirection = player.getEyePosition(1.0F)
+                    .subtract(aimHitPos)
+                    .normalize()
+                    .reverse();
+        }
+
+        // Get the item held in the specified hand.
+        ItemStack heldItem = (handType == HandType.MAIN)
+                ? player.getMainHandItem()
+                : player.getOffhandItem();
+
+        // Check if the held item qualifies for aim adjustments.
+        boolean isThrowable = ItemClassifier.THROWABLE.is(heldItem.getItem());
+        boolean isPotion = heldItem.getItem() instanceof PotionItem;
+        boolean isBow = heldItem.getItem() instanceof BowItem;
+        boolean isChargedCrossbow = heldItem.getItem() instanceof CrossbowItem
+                && CrossbowItem.isCharged(heldItem);
+        boolean isShield = ItemClassifier.SHIELD.is(heldItem);
+
+        // If the held item affects aiming, update the look direction.
+        if (isThrowable || isPotion || isBow || isChargedCrossbow || isShield) {
+            VRPlayerPoseClient preTickPose = ClientContext
+                    .localPlayer.getPoseData(PlayerPoseType.TICK);
+            lookDirection = new Vec3(
+                    (Vector3f) preTickPose.getHand(handType).getDirection()
+            );
+
+
+        }
+
+        return lookDirection;
+    }
+}

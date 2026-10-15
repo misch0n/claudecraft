@@ -1,0 +1,153 @@
+package org.vmstudio.visor.mixin.common.world.entity;
+
+import net.minecraft.world.entity.EquipmentSlot;
+import org.vmstudio.visor.api.VisorAPI;
+import org.vmstudio.visor.api.server.player.VRServerPlayer;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.ai.control.LookControl;
+import net.minecraft.world.entity.monster.Enderman;
+import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+import org.jetbrains.annotations.Nullable;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+
+public class EndermanMixins {
+
+
+    @Mixin(targets = "net.minecraft.world.entity.monster.Enderman$EndermanFreezeWhenLookedAt")
+    public static class EndermanFreezeWhenLookedAtMixin {
+
+        @Shadow
+        @Nullable
+        private LivingEntity target;
+
+        @WrapOperation(at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/ai/control/LookControl;setLookAt(DDD)V"),
+                method = "tick")
+        public void visor$lookAtHmd(LookControl instance,
+                                    double d, double e, double f,
+                                    Operation<Void> original) {
+            if (this.target instanceof ServerPlayer player) {
+                VRServerPlayer vrPlayer = VisorAPI.server()
+                        .getVRPlayer(
+                                player
+                        );
+                if (vrPlayer != null) {
+                    Vec3 hmdPos = vrPlayer.getPoseData().getHmd()
+                            .getPositionVec3();
+                    original.call(instance, hmdPos.x, hmdPos.y, hmdPos.z);
+                    return;
+                }
+            }
+            original.call(instance, d, e, f);
+        }
+    }
+
+
+
+    @Mixin(Enderman.class)
+    public abstract static class EndermanMixin extends Monster {
+
+        protected EndermanMixin(EntityType<? extends Monster> entityType, Level level) {
+            super(entityType, level);
+        }
+
+        //? if >=1.21.2 {
+        @Inject(at = @At("HEAD"), method = "isBeingStaredBy(Lnet/minecraft/world/entity/player/Player;)Z", cancellable = true)
+        public void visor$vrPlayerLookingAtMe(Player player, CallbackInfoReturnable<Boolean> cir) {
+            visor$vrStare(player, cir);
+        }
+        //?} else {
+        /*@Inject(at = @At("HEAD"), method = "isLookingAtMe(Lnet/minecraft/world/entity/player/Player;)Z", cancellable = true)
+        public void visor$vrPlayerLookingAtMe(Player player, CallbackInfoReturnable<Boolean> cir) {
+            visor$vrStare(player, cir);
+        }
+        *///?}
+
+        @Unique
+        private void visor$vrStare(Player player, CallbackInfoReturnable<Boolean> cir) {
+            if (!(player instanceof ServerPlayer serverPlayer)) return;
+            var vrPlayer = VisorAPI.server().getVRPlayer(serverPlayer);
+            if (vrPlayer != null) {
+                cir.setReturnValue(
+                        visor$canAttackVrPlayer(
+                                (Enderman) (Object) this,
+                                serverPlayer,
+                                vrPlayer
+                        )
+                );
+            }
+        }
+
+        @Unique
+        private static boolean visor$canAttackVrPlayer(Enderman enderman,
+                                                       ServerPlayer player,
+                                                       VRServerPlayer vrPlayer) {
+            ItemStack itemstack = player.getItemBySlot(EquipmentSlot.HEAD);
+            if (!itemstack.is(Items.CARVED_PUMPKIN)) { //no ender item
+                if (player.level() != enderman.level()) return false;
+
+                var hmd = vrPlayer.getPoseData().getHmd();
+
+                Vec3 hmdPos = hmd.getPositionVec3();
+                Vec3 relativePos = new Vec3(
+                        enderman.getX() - hmdPos.x,
+                        enderman.getEyeY() - hmdPos.y,
+                        enderman.getZ() - hmdPos.z
+                );
+
+                double relativeLength = relativePos.length();
+
+                relativePos = relativePos.normalize();
+                double dotProd = hmd.getDirectionVec3()
+                        .dot(relativePos);
+
+                return dotProd > 1.0 - 0.1 / relativeLength
+                        && relativeLength < 128.0
+                        &&
+                        visor$canEntityBeSeen(
+                                enderman,
+                                hmdPos,
+                                player
+                        );
+            }
+
+            return false;
+        }
+
+        @Unique
+        private static boolean visor$canEntityBeSeen(Entity entity,
+                                                     Vec3 playerEyePos,
+                                                     Entity viewer) {
+            Vec3 entityEyePos = new Vec3(
+                    entity.getX(),
+                    entity.getEyeY(),
+                    entity.getZ()
+            );
+            return entity.level().clip(
+                    new ClipContext(
+                            playerEyePos,
+                            entityEyePos,
+                            ClipContext.Block.COLLIDER,
+                            ClipContext.Fluid.NONE,
+                            viewer
+                    )
+            ).getType() == HitResult.Type.MISS;
+        }
+    }
+}

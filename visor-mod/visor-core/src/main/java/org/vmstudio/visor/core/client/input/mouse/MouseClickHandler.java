@@ -1,0 +1,292 @@
+package org.vmstudio.visor.core.client.input.mouse;
+
+import com.mojang.blaze3d.platform.InputConstants;
+import lombok.Setter;
+import org.vmstudio.visor.api.client.ClientFeature;
+import org.vmstudio.visor.api.client.gui.overlays.VROverlay;
+import org.vmstudio.visor.api.client.gui.overlays.framework.VROverlayScreen;
+import org.vmstudio.visor.api.client.input.InputHelper;
+import org.vmstudio.visor.api.client.input.MouseButtonType;
+import org.vmstudio.visor.api.common.HandType;
+import org.vmstudio.visor.api.server.VRServerSettings;
+import org.vmstudio.visor.core.client.ClientContext;
+import org.vmstudio.visor.api.compatibility.mcversion.McVersionClientUtils;
+import org.jetbrains.annotations.NotNull;
+
+import static org.vmstudio.visor.core.client.VisorClientImpl.MC;
+
+public class MouseClickHandler {
+
+    public final static MouseClickHandler LEFT_HANDLER = new MouseClickHandler(MouseButtonType.LEFT);
+
+    public final static MouseClickHandler RIGHT_HANDLER = new MouseClickHandler(MouseButtonType.RIGHT);
+
+    public final static MouseClickHandler MIDDLE_HANDLER = new MouseClickHandler(MouseButtonType.MIDDLE);
+
+    private final MouseButtonType buttonType;
+
+    private boolean mainHandPressed;
+    private boolean offhandPressed;
+
+    private boolean mainHandChanged;
+    private boolean offhandChanged;
+
+    private VROverlay previousFocus;
+    private VROverlay pressedOverlay;
+    private boolean wasPressedOverlay;
+    private boolean ignoreSingleClick;
+
+    private boolean gamePressed;
+
+    // only used by left-click
+    private final boolean isLeftClick;
+    @Setter
+    private boolean forcedMain, forcedOffhand;
+
+    public MouseClickHandler(MouseButtonType buttonType) {
+        this.buttonType = buttonType;
+        this.isLeftClick = buttonType == MouseButtonType.LEFT;
+    }
+
+    public void updateState(@NotNull HandType handType,
+                            boolean pressed,
+                            boolean changed) {
+        switch (handType) {
+            case MAIN -> {
+                mainHandPressed = pressed;
+                mainHandChanged = changed;
+            }
+            case OFFHAND -> {
+                offhandPressed = pressed;
+                offhandChanged = changed;
+            }
+        }
+    }
+
+    public void preTick() {
+        if (!ClientContext.visor.isFeatureEnabled(ClientFeature.INPUT_MOUSE)) {
+            return;
+        }
+
+        VROverlay focusedOverlay = ClientContext.cursorHandler.getFocusedOverlay();
+
+        // --- Cleanup Clicks ---
+        if (focusedOverlay != null
+                && previousFocus == null
+                && InputHelper.isMousePressed(buttonType)) {
+            InputHelper.releaseMouse(buttonType);
+        } else if (focusedOverlay == null
+                && pressedOverlay != null
+                && wasPressedOverlay) {
+            pressedOverlay.mouseReleased(
+                    pressedOverlay.getMouseX(),
+                    pressedOverlay.getMouseY(),
+                    buttonType.getId()
+            );
+            if (pressedOverlay instanceof VROverlayScreen overlayScreen) {
+                overlayScreen.finishDragMouse(buttonType.getId());
+            }
+            wasPressedOverlay = false;
+            pressedOverlay = null;
+        } else if (focusedOverlay != null
+                && pressedOverlay != null
+                && focusedOverlay != pressedOverlay
+                && wasPressedOverlay) {
+            pressedOverlay.mouseReleased(
+                    pressedOverlay.getMouseX(),
+                    pressedOverlay.getMouseY(),
+                    buttonType.getId()
+            );
+            if (pressedOverlay instanceof VROverlayScreen overlayScreen) {
+                overlayScreen.finishDragMouse(buttonType.getId());
+            }
+            wasPressedOverlay = false;
+            pressedOverlay = null;
+        }
+        previousFocus = focusedOverlay;
+
+        // --- Cursor hand switching (left click only) ---
+        if (isLeftClick) {
+            processCursorUpdate();
+        }
+    }
+
+    private void processCursorUpdate() {
+        if (!ClientContext.cursorHandler.isAnyHandFocused()) {
+            return;
+        }
+
+        HandType cursorHand = ClientContext.cursorHandler.getCursorHand();
+
+        boolean offHandClicked = offhandPressed && offhandChanged;
+        boolean mainClicked = mainHandPressed && mainHandChanged;
+        if (offHandClicked && mainClicked) {
+            return;
+        }
+
+        if (cursorHand != HandType.OFFHAND
+                && offHandClicked
+                && !mainHandPressed
+                && !mainHandChanged) {
+
+            if (!ClientContext.cursorHandler.isHandFocused(HandType.OFFHAND)) {
+                return;
+            }
+            if (!ClientContext.cursorHandler.isTwoHandedCursor()) {
+                ignoreSingleClick = true;
+            }
+            ClientContext.cursorHandler.setCursorHand(HandType.OFFHAND);
+            ClientContext.cursorHandler.process();
+            return;
+        }
+
+        if (cursorHand != HandType.MAIN
+                && mainClicked
+                && !offhandPressed
+                && !offhandChanged) {
+
+            if (!ClientContext.cursorHandler.isHandFocused(HandType.MAIN)) {
+                return;
+            }
+            if (!ClientContext.cursorHandler.isTwoHandedCursor()) {
+                ignoreSingleClick = true;
+            }
+            ClientContext.cursorHandler.setCursorHand(HandType.MAIN);
+            ClientContext.cursorHandler.process();
+        }
+    }
+
+    public void onPress(@NotNull HandType handType) {
+
+        if (!ClientContext.visor.isFeatureEnabled(ClientFeature.INPUT_MOUSE)) {
+            return;
+        }
+
+        if (ClientContext.cursorHandler.isCursorHandFocused()
+                || McVersionClientUtils.screen() != null
+                || MC.player == null) {
+            var activeHand = ClientContext.cursorHandler.getCursorHand();
+            if (handType != activeHand) {
+                return;
+            }
+        }
+
+        ClientContext.inputManager.triggerHapticPulseClick(handType);
+        if (isLeftClick && ignoreSingleClick) {
+            return;
+        }
+        process(handType);
+    }
+
+    public void onRelease(@NotNull HandType handType) {
+        if (isLeftClick && ignoreSingleClick) {
+            ignoreSingleClick = false;
+            if (!gamePressed && !wasPressedOverlay) {
+                return;
+            }
+        }
+
+        if (wasPressedOverlay) {
+            VROverlay target = pressedOverlay;
+            if (target == null) {
+                target = ClientContext.cursorHandler.getFocusedOverlay();
+            }
+            if (target != null) {
+                target.mouseReleased(
+                        target.getMouseX(),
+                        target.getMouseY(),
+                        buttonType.getId()
+                );
+                if (target instanceof VROverlayScreen overlayScreen) {
+                    overlayScreen.finishDragMouse(buttonType.getId());
+                }
+            }
+            wasPressedOverlay = false;
+            pressedOverlay = null;
+        }
+
+        if (gamePressed) {
+            InputHelper.releaseMouse(buttonType);
+            gamePressed = false;
+        }
+    }
+
+    public void onClear() {
+        InputHelper.releaseMouse(buttonType);
+        if (pressedOverlay != null && wasPressedOverlay) {
+            pressedOverlay.mouseReleased(
+                    pressedOverlay.getMouseX(),
+                    pressedOverlay.getMouseY(),
+                    buttonType.getId()
+            );
+            if (pressedOverlay instanceof VROverlayScreen overlayScreen) {
+                overlayScreen.finishDragMouse(buttonType.getId());
+            }
+        }
+        previousFocus = null;
+        pressedOverlay = null;
+        wasPressedOverlay = false;
+        ignoreSingleClick = false;
+        gamePressed = false;
+    }
+
+    private void process(@NotNull HandType handType) {
+        VROverlay focusedOverlay = ClientContext.cursorHandler.getFocusedOverlay();
+
+        if (focusedOverlay != null) {
+            processOverlay(focusedOverlay);
+            return;
+        }
+        if (McVersionClientUtils.screen() != null) {
+            processScreen();
+            return;
+        }
+        if (MC.player != null) {
+            processGame(handType);
+        }
+    }
+
+    private void processOverlay(VROverlay overlay) {
+        overlay.mouseClicked(
+                overlay.getMouseX(), overlay.getMouseY(),
+                buttonType.getId()
+        );
+        if (overlay instanceof VROverlayScreen overlayScreen) {
+            overlayScreen.startDragMouse(buttonType.getId());
+        }
+        wasPressedOverlay = true;
+        pressedOverlay = overlay;
+    }
+
+    private void processScreen() {
+        if (!isLeftClick) {
+            return;
+        }
+        if (MC.level != null) {
+            //clicked outside of overlay screen, close the screen
+            InputHelper.pressKey(InputConstants.KEY_ESCAPE);
+            InputHelper.releaseKey(InputConstants.KEY_ESCAPE);
+        }
+    }
+
+    private void processGame(@NotNull HandType handType) {
+        // switch active hand if only one hand is pressed
+        var localPlayer = ClientContext.localPlayer;
+        if (localPlayer.getActiveHand() != handType) {
+            if ((mainHandPressed && !offhandPressed)
+                    || (!mainHandPressed && offhandPressed)) {
+                boolean forced = (forcedMain && mainHandPressed)
+                        || (forcedOffhand && offhandPressed);
+                if (VRServerSettings.isTwoHandedVR()) {
+                    localPlayer.setActiveHand(handType);
+                } else if (handType == HandType.OFFHAND && !forced) {
+                    //two-handed mode disabled, offhand cannot be active
+                    // (except rare cases outside mouse clicks)
+                    return;
+                }
+            }
+        }
+        InputHelper.pressMouse(buttonType);
+        gamePressed = true;
+    }
+}

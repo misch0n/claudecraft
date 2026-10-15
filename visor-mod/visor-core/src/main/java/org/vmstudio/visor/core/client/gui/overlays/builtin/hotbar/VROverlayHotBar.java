@@ -1,0 +1,471 @@
+package org.vmstudio.visor.core.client.gui.overlays.builtin.hotbar;
+
+
+import lombok.Getter;
+import me.phoenixra.atumvr.api.utils.MathUtils;
+import org.vmstudio.visor.api.VisorAPI;
+import org.vmstudio.visor.api.client.ClientFeature;
+import org.vmstudio.visor.api.client.player.pose.VRPlayerPoseClient;
+import org.vmstudio.visor.api.client.player.pose.PlayerPoseType;
+import org.vmstudio.visor.api.client.events.AllowClientFeatureVREvent;
+import org.vmstudio.visor.api.client.player.pose.PoseAnchor;
+import org.vmstudio.visor.api.client.gui.GuiTexture;
+import org.vmstudio.visor.api.client.gui.overlays.VROverlayHelper;
+import org.vmstudio.visor.api.client.gui.overlays.framework.screen.VROverlayRadialSelector;
+import org.vmstudio.visor.api.client.render.VRRenderPass;
+import org.vmstudio.visor.api.common.HandType;
+import org.vmstudio.visor.api.common.addon.component.ComponentPriority;
+import org.vmstudio.visor.api.common.addon.VisorAddon;
+import org.vmstudio.visor.api.common.eventbus.listener.VREventHandler;
+import org.vmstudio.visor.api.common.eventbus.listener.VREventListener;
+import org.vmstudio.visor.api.compatibility.mcversion.McVersionUtils;
+import org.vmstudio.visor.core.client.ClientContext;
+import org.vmstudio.visor.core.client.render.helpers.RenderPoseHelper;
+import org.vmstudio.visor.api.client.settings.VRClientSettings;
+import org.vmstudio.visor.core.client.tasks.types.TaskHotBar;
+import net.minecraft.ChatFormatting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import org.vmstudio.visor.api.compatibility.mcversion.gui.McGuiUtils;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.ItemStack;
+import org.jetbrains.annotations.NotNull;
+import org.joml.Vector3f;
+
+
+public class VROverlayHotBar extends VROverlayRadialSelector
+        implements VREventListener {
+
+    public static final String ID_MAIN = "hotbar_mainhand";
+    public static final String ID_OFFHAND = "hotbar_offhand";
+
+    private static final int ITEM_NAME_GAP = 4;
+    private static final int ITEM_NAME_PADDING_X = 3;
+    private static final int ITEM_NAME_PADDING_Y = 2;
+    private static final int ITEM_NAME_BACKGROUND = 0x80000000;
+
+    private static final int HOTBAR_IMAGE_SIZE = 98;
+    private static final int SLOT_NUMBERS_IMAGE_DIFF = (112-HOTBAR_IMAGE_SIZE)/2;
+
+    private GuiTexture hotbarSlotNumbers = new GuiTexture(
+            McVersionUtils.newResourceLoc(
+                    VisorAPI.MOD_ID,"textures/gui/overlays/hotbar/slot_numbers.png"
+            )
+    );
+
+    private GuiTexture hotbarSelectedMain0Tex = new GuiTexture(
+            McVersionUtils.newResourceLoc(
+                    VisorAPI.MOD_ID,"textures/gui/overlays/hotbar/hotbar_main_selected0.png"
+            )
+    );
+    private GuiTexture hotbarSelectedMain1Tex = new GuiTexture(
+            McVersionUtils.newResourceLoc(
+                    VisorAPI.MOD_ID,"textures/gui/overlays/hotbar/hotbar_main_selected1.png"
+            )
+    );
+
+    private GuiTexture hotbarSelectedOffhand0Tex = new GuiTexture(
+            McVersionUtils.newResourceLoc(
+                    VisorAPI.MOD_ID,"textures/gui/overlays/hotbar/hotbar_offhand_selected0.png"
+            )
+    );
+    private GuiTexture hotbarSelectedOffhand1Tex = new GuiTexture(
+            McVersionUtils.newResourceLoc(
+                    VisorAPI.MOD_ID,"textures/gui/overlays/hotbar/hotbar_offhand_selected1.png"
+            )
+    );
+
+    private final Vector3f orientPosOffset = new Vector3f(0, 0, -0.6f);
+    private final Vector3f orientRotationOffset = new Vector3f(0, 0, 0);
+
+
+    private Vector3f orientPosOffsetRender;
+
+    public VROverlayHotBar(@NotNull VisorAddon owner,
+                           @NotNull HandType hand,
+                           @NotNull String id) {
+
+        super(owner, hand, id,
+                hand == HandType.MAIN
+                        ? ComponentPriority.HIGH
+                        : ComponentPriority.NORMAL,
+                HOTBAR_IMAGE_SIZE,
+                new SelectionBoxHotBar(
+                        HotBarSlice.CENTER.getSlot(),
+                        41, 41,
+                        0 //dead zone, angle unused
+                ),
+                new SelectionBoxHotBar(
+                        HotBarSlice.TOP_LEFT.getSlot(),
+                        5, 5,
+                        (-3 * Math.PI) / 4
+                ),
+                new SelectionBoxHotBar(
+                        HotBarSlice.TOP.getSlot(),
+                        41, 5,
+                        -Math.PI / 2
+                ),
+                new SelectionBoxHotBar(
+                        HotBarSlice.TOP_RIGHT.getSlot(),
+                        77, 5,
+                        -Math.PI / 4
+                ),
+                new SelectionBoxHotBar(
+                        HotBarSlice.RIGHT.getSlot(),
+                        77, 41,
+                        0
+                ),
+                new SelectionBoxHotBar(
+                        HotBarSlice.BOTTOM_RIGHT.getSlot(),
+                        77, 77,
+                        Math.PI / 4
+                ),
+                new SelectionBoxHotBar(
+                        HotBarSlice.BOTTOM.getSlot(),
+                        41, 77,
+                        Math.PI / 2
+                ),
+                new SelectionBoxHotBar(
+                        HotBarSlice.BOTTOM_LEFT.getSlot(),
+                        5, 77,
+                        (3 * Math.PI) / 4
+                ),
+                new SelectionBoxHotBar(
+                        HotBarSlice.LEFT.getSlot(),
+                        5, 41,
+                        Math.PI
+                ));
+        VisorAPI.eventBus().registerListener(owner,this);
+    }
+
+    @VREventHandler
+    public void disableAimEffectsAndMouse(AllowClientFeatureVREvent event){
+        if(event.getFeature() == ClientFeature.AIM_EFFECTS
+                || event.getFeature() == ClientFeature.INPUT_MOUSE
+                || event.getFeature() == ClientFeature.GUI_CURSOR) {
+
+            if(isVisible()
+                    && ClientContext.localPlayer.getActiveHand() == getUsedHand()){
+                event.setCanceled(true);
+            }
+
+        }
+    }
+
+
+
+
+    @Override
+    public void onRender(GuiGraphicsExtractor guiGraphics, int pMouseX, int pMouseY, float pPartialTicks) {
+
+
+        VROverlayHotBar hotBarOffhand = (VROverlayHotBar) ClientContext.overlayManager
+                .getOverlay(ID_OFFHAND);
+        VROverlayHotBar hotBarMainHand = (VROverlayHotBar) ClientContext.overlayManager
+                .getOverlay(ID_MAIN);
+
+        //if selected slices are the same
+        //change left to 1
+        if (hotBarOffhand == this) {
+            if (hotBarMainHand.isEnabled()
+                    && hotBarMainHand.getSelectedSlice() == 0
+                    && hotBarOffhand.getSelectedSlice() == 0) {
+                hotBarOffhand.setSelectedSlice(1);
+            }
+        }
+        //disabled box slices update
+        if (hotBarMainHand == this) {
+            hotBarOffhand.getDisabledBoxes().clear();
+            if (hotBarMainHand.getSelectedSlice() != -1) {
+                hotBarOffhand.getDisabledBoxes().add(
+                        hotBarMainHand.getSelectedSlice()
+                );
+            }
+            if (!hotBarOffhand.isEnabled()) {
+                disabledBoxes.clear();
+            }
+        } else {
+            hotBarMainHand.getDisabledBoxes().clear();
+            if (hotBarOffhand.getSelectedSlice() != -1) {
+                hotBarMainHand.getDisabledBoxes().add(
+                        hotBarOffhand.getSelectedSlice()
+                );
+            }
+            if (!hotBarMainHand.isEnabled()) {
+                disabledBoxes.clear();
+            }
+        }
+        super.onRender(guiGraphics, pMouseX, pMouseY, pPartialTicks);
+    }
+
+    @Override
+    protected void renderRadialImage(GuiGraphicsExtractor guiGraphics,
+                                     float pPartialTicks,
+                                     int selectedSlice,
+                                     int x, int y, int size
+    ) {
+
+        //----Main image
+        HotBarSlice.fromSlot(selectedSlice)
+                .getBackground()
+                .blit(
+                        guiGraphics,
+                        x, y,
+                        size, size
+                );
+
+        //----Slot numbers
+        if (VRClientSettings.isHotBarSlotNumbers()) {
+            hotbarSlotNumbers.blit(
+                    guiGraphics,
+                    x - SLOT_NUMBERS_IMAGE_DIFF, y - SLOT_NUMBERS_IMAGE_DIFF,
+                    size + 2 * SLOT_NUMBERS_IMAGE_DIFF, size + 2 * SLOT_NUMBERS_IMAGE_DIFF
+            );
+        }
+
+
+        //----Items
+        Inventory inventory = Minecraft.getInstance().player.getInventory();
+        for (int slot = 0; slot < 9; slot++) {
+            ItemStack itemStack = inventory.getItem(slot);
+            if (itemStack.isEmpty()) continue;
+            SelectionBox selectionBox = selectionBoxes.get(slot);
+            int itemX = ((SelectionBoxHotBar) selectionBox).getItemX();
+            int itemY = ((SelectionBoxHotBar) selectionBox).getItemY();
+
+            McGuiUtils.pushPose(guiGraphics);
+            McGuiUtils.renderItem(guiGraphics,
+                    itemStack,
+                    x + itemX,
+                    y + itemY
+
+            );
+            McGuiUtils.renderItemDecorations(guiGraphics,
+                    this.font,
+                    itemStack,
+                    x + itemX,
+                    y + itemY,
+                    null
+            );
+            McGuiUtils.popPose(guiGraphics);
+        }
+
+
+
+        //----Name of the item in the selected slot
+        renderSelectedItemName(guiGraphics, inventory, selectedSlice, x, y, size);
+
+
+        //----Highlighting for selected slots
+        HotBarSlice slice = HotBarSlice.fromSlot(TaskHotBar.getInstance().getSlotMain());
+        if (slice == HotBarSlice.NOT_SELECTED) return;
+        SelectionBoxHotBar selectionBox = (SelectionBoxHotBar)selectionBoxes.get(slice.slot);
+        int itemX = selectionBox.getItemX();
+        int itemY = selectionBox.getItemY();
+
+        if(slice.slot != 0) {
+            hotbarSelectedMain0Tex.blit(
+                    guiGraphics,
+                    x + itemX - 5,
+                    y + itemY - 5,
+                    26, 26
+            );
+        }else{
+            hotbarSelectedMain1Tex.blit(
+                    guiGraphics,
+                    x + itemX - 5,
+                    y + itemY - 5,
+                    26, 26
+            );
+        }
+
+        slice = HotBarSlice.fromSlot(TaskHotBar.getInstance().getSlotOffhand());
+        if (slice == HotBarSlice.NOT_SELECTED) return;
+        selectionBox = (SelectionBoxHotBar) selectionBoxes.get(slice.slot);
+        itemX = selectionBox.getItemX();
+        itemY = selectionBox.getItemY();
+
+        if(slice.slot != 0) {
+            hotbarSelectedOffhand0Tex.blit(
+                    guiGraphics,
+                    x + itemX - 5,
+                    y + itemY - 5,
+                    26, 26
+            );
+        }else{
+            hotbarSelectedOffhand1Tex.blit(
+                    guiGraphics,
+                    x + itemX - 5,
+                    y + itemY - 5,
+                    26, 26
+            );
+        }
+
+    }
+
+    private void renderSelectedItemName(GuiGraphicsExtractor guiGraphics,
+                                        Inventory inventory,
+                                        int selectedSlice,
+                                        int x, int y, int size) {
+        if (selectedSlice < 0 || selectedSlice >= 9) return;
+
+        ItemStack itemStack = inventory.getItem(selectedSlice);
+        if (itemStack.isEmpty()) return;
+
+        MutableComponent itemName = Component.empty()
+                .append(itemStack.getHoverName())
+                .withStyle(McVersionUtils.rarityColor(itemStack.getRarity()));
+        if (McVersionUtils.hasCustomHoverName(itemStack)) {
+            itemName.withStyle(ChatFormatting.ITALIC);
+        }
+
+        int nameWidth = font.width(itemName);
+        int nameHeight = font.lineHeight - 1;
+        int nameX = x + (size - nameWidth) / 2;
+        int nameY = y + size + ITEM_NAME_GAP;
+        if (VRClientSettings.isHotBarSlotNumbers()) {
+            nameY += SLOT_NUMBERS_IMAGE_DIFF;
+        }
+
+        guiGraphics.fill(
+                nameX - ITEM_NAME_PADDING_X,
+                nameY - ITEM_NAME_PADDING_Y,
+                nameX + nameWidth + ITEM_NAME_PADDING_X,
+                nameY + nameHeight + ITEM_NAME_PADDING_Y,
+                ITEM_NAME_BACKGROUND
+        );
+        McGuiUtils.drawString(guiGraphics, font, itemName, nameX, nameY, 0xFFFFFFFF);
+    }
+
+    @Override
+    protected void onTick() {
+
+    }
+
+    @Override
+    public boolean updateVisibility() {
+        return true;
+    }
+
+    @Override
+    public void onUpdatePose(float partialTicks) {
+        var camPos = RenderPoseHelper.getCameraPosition(
+                VRRenderPass.GUI,
+                ClientContext.localPlayer.getPoseData(PlayerPoseType.RENDER)
+        );
+
+        getPose().updateOnlyPosition(new Vector3f(
+                camPos.x() + orientPosOffsetRender.x,
+                camPos.y() + orientPosOffsetRender.y,
+                camPos.z() + orientPosOffsetRender.z
+        ));
+    }
+
+    @Override
+    public void onEnable() {
+        PoseAnchor posAnchor = (getUsedHand() == HandType.OFFHAND ?
+                PoseAnchor.OFFHAND : PoseAnchor.MAIN_HAND);
+
+        VRPlayerPoseClient renderPose = ClientContext
+                .localPlayer
+                .getPoseData(PlayerPoseType.RENDER);
+
+        VROverlayHelper.applyPose(
+                this,
+                posAnchor,
+                PoseAnchor.HMD,
+                getPose().getScale(),
+                true,
+                orientPosOffset,
+                orientRotationOffset
+
+        );
+        orientPosOffsetRender = getPose().getPosition().sub(
+                renderPose.getHmd().getPosition(),
+                new Vector3f()
+        );
+
+        disabledBoxes.clear();
+    }
+
+    @Override
+    public void onDisable() {
+    }
+
+
+    @Getter
+    private static class SelectionBoxHotBar extends SelectionBox {
+        private static final double SECTOR_HALF_ANGLE = Math.PI / 8;
+        private static final int STICKY_RADIUS_MARGIN = 8;
+
+        //direction this box is thrown at, unused by the center one
+        private final double sectorAngle;
+
+        private final int itemX;
+        private final int itemY;
+
+        public SelectionBoxHotBar(int id,
+                                  int itemX, int itemY,
+                                  double sectorAngle
+        ) {
+            super(id);
+            this.sectorAngle = sectorAngle;
+            this.itemX = itemX;
+            this.itemY = itemY;
+        }
+
+        @Override
+        public boolean isInBox(int x, int y) {
+            return isInBox(x, y, 0, 0);
+        }
+
+        @Override
+        public boolean isInBoxSticky(int x, int y) {
+            return isInBox(
+                    x, y,
+                    Math.toRadians(VRClientSettings.getHotBarHysteresisMargin()),
+                    STICKY_RADIUS_MARGIN
+            );
+        }
+
+        private boolean isInBox(int x, int y,
+                                double angleMargin,
+                                int radiusMargin) {
+            double centerSlotRadius = VRClientSettings.getHotBarCenterRadius();
+            double distance = Math.sqrt((double) x * x + (double) y * y);
+
+            if (getId() == HotBarSlice.CENTER.getSlot()) {
+                return distance <= centerSlotRadius + radiusMargin;
+            }
+            if (distance < centerSlotRadius - radiusMargin) {
+                return false;
+            }
+
+            double delta = wrapAngle(MathUtils.fastAtan2(y, x) - sectorAngle);
+
+            return Math.abs(delta) <= SECTOR_HALF_ANGLE + angleMargin;
+        }
+
+        private static double wrapAngle(double angle) {
+            angle %= 2 * Math.PI;
+            if (angle > Math.PI) return angle - 2 * Math.PI;
+            if (angle < -Math.PI) return angle + 2 * Math.PI;
+            return angle;
+        }
+    }
+
+
+
+    @Override
+    public @NotNull Component getName() {
+        return Component.translatable("visor.overlay.%s.name".formatted(getId()));
+    }
+
+    @Override
+    public @NotNull Component getDescription() {
+        return Component.translatable("visor.overlay.%s.description".formatted(getId()));
+    }
+}

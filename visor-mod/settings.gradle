@@ -1,0 +1,54 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+        maven { name = "Fabric"; url = "https://maven.fabricmc.net/" }
+        maven { name = "Architectury"; url = "https://maven.architectury.dev/" }
+        maven { name = "Forge"; url = "https://maven.minecraftforge.net/" }
+        maven { name = "NeoForge"; url = "https://maven.neoforged.net/releases/" }
+        maven { name = "Stonecutter"; url = "https://maven.kikugie.dev/releases" }
+    }
+}
+
+plugins {
+    id "dev.kikugie.stonecutter" version "0.9.8"
+    // Downloads a JDK when the one required by `java_version` is not installed
+    id "org.gradle.toolchains.foojay-resolver-convention" version "1.0.0"
+}
+
+rootProject.name = "Visor"
+
+// ----- Version targets from stonecutter.properties.toml -----------------
+def targets = stonecutter.properties.rawOrNull("targets")
+if (targets == null) {
+    throw new GradleException("stonecutter.properties.toml needs a [targets] table!")
+}
+def loadersByVersion = new TreeMap()
+targets.asMap().each { version, loaders ->
+    loadersByVersion[version] = loaders.asList().collect { it.asPrimitive().content.toString() }
+}
+def versionsFor = { String loader -> loadersByVersion.findAll { it.value.contains(loader) }.keySet() as String[] }
+
+// ----- StoneCutter create -----------------------------------------
+stonecutter {
+    kotlinController = false            // use Groovy
+    centralScript = "build.gradle"      // <branch>/build.gradle
+
+    create(rootProject) {
+        // Loader independent branches: the public API and the implementation
+        branch("visor-api")  { versions(loadersByVersion.keySet() as String[]) }
+        branch("visor-core") { versions(loadersByVersion.keySet() as String[]) }
+
+        // Mod Loader branches
+        branch("visor-fabric") { versions(versionsFor("fabric")) }
+        branch("visor-forge")  { versions(versionsFor("forge")) }
+        branch("visor-neoforge") { versions(versionsFor("neoforge")) }
+
+        // Main version, should be used for git commits
+        vcsVersion = "26.3"
+    }
+}
+
+// Version independent module
+// Not a Stonecutter branch - it never touches Minecraft.
+include "visor-core:stubs"

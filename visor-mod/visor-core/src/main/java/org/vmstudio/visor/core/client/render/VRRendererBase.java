@@ -1,0 +1,469 @@
+package org.vmstudio.visor.core.client.render;
+
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import lombok.Getter;
+import lombok.Setter;
+import me.phoenixra.atumvr.api.enums.EyeType;
+import me.phoenixra.atumvr.api.utils.GLUtils;
+import org.vmstudio.visor.api.client.gui.overlays.framework.VROverlayScreen;
+import org.vmstudio.visor.api.client.render.VRRenderPass;
+import org.vmstudio.visor.api.client.render.VRRenderer;
+import org.vmstudio.visor.api.compatibility.mcversion.render.McGlState;
+import org.vmstudio.visor.api.compatibility.mcversion.render.McRenderTarget;
+import org.vmstudio.visor.core.client.render.context.RenderContext;
+import org.vmstudio.visor.core.client.render.helpers.MirrorHelper;
+import org.vmstudio.visor.core.client.render.helpers.RenderStateHelper;
+import org.vmstudio.visor.compatibility.ShaderCompatHelper;
+import org.vmstudio.visor.core.client.VisorState;
+import org.vmstudio.visor.core.client.VisorClientImpl;
+import org.vmstudio.visor.core.client.gui.VRGuiManagerImpl;
+import org.vmstudio.visor.extensions.client.WindowExtension;
+import org.vmstudio.visor.extensions.client.render.GameRendererExtension;
+import org.vmstudio.visor.core.client.provider.VisorScene;
+import org.vmstudio.visor.core.client.render.target.types.RenderTargetFirst;
+import org.vmstudio.visor.core.client.render.target.types.RenderTargetGUI;
+import org.vmstudio.visor.core.client.render.target.types.RenderTargetMain;
+import org.vmstudio.visor.core.client.render.target.types.RenderTargetThird;
+import org.vmstudio.visor.core.client.utils.ClientUtils;
+import org.vmstudio.visor.api.client.settings.VRClientSettings;
+import org.vmstudio.visor.api.client.settings.enums.MirrorMode;
+import org.vmstudio.visor.api.common.utils.LoggerUtils;
+import net.minecraft.client.Minecraft;
+import org.vmstudio.visor.api.compatibility.mcversion.McVersionClientUtils;
+import org.vmstudio.visor.api.compatibility.mcversion.render.McFeatureRenderer;
+import org.jetbrains.annotations.NotNull;
+import org.joml.Matrix4f;
+import org.lwjgl.system.MemoryStack;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.vmstudio.visor.core.client.ClientContext;
+import static org.vmstudio.visor.core.client.VisorClientImpl.MC;
+
+public abstract class VRRendererBase implements VRRenderer {
+    private static final long RENDER_SCALE_SETTLE_MS = 300L;
+
+    public RenderTargetMain mainTarget;
+
+    public RenderTargetGUI guiTarget;
+    public RenderTargetFirst firstPersonTarget;
+    public RenderTargetThird thirdPersonTarget;
+
+    private final Matrix4f[] eyeProjection = new Matrix4f[2];
+
+    protected final Map<EyeType, float[]> hiddenArea = new HashMap<>();
+
+
+    @Getter
+    protected int resolutionWidth;
+    @Getter
+    protected int resolutionHeight;
+
+    @Getter
+    private int mirrorWidth;
+    @Getter
+    private int mirrorHeight;
+
+    public float renderScale;
+    private float appliedRenderScaleFactor;
+    private float pendingRenderScaleFactor;
+    private long pendingRenderScaleSince;
+
+
+    public long lastWindow = 0L;
+
+
+    @Getter @Setter
+    private boolean askedForScreenShot = false;
+
+
+
+    protected boolean reinitTargets = true;
+    protected boolean resizeTargets = false;
+
+
+
+    public VRRendererBase() {
+        hiddenArea.put(EyeType.LEFT, new float[0]);
+        hiddenArea.put(EyeType.RIGHT, new float[0]);
+        ClientContext.renderer = this;
+
+    }
+
+
+
+    protected abstract void setupEyes();
+    protected abstract void setupResolution(MemoryStack stack);
+    protected abstract void setupHiddenArea(MemoryStack stack);
+    protected abstract boolean shouldRenderFrame();
+    protected abstract void endFrame();
+    public abstract Matrix4f getProjectionMatrix(EyeType eyeType, float nearClip, float farClip);
+    @Override
+    public abstract VisorScene getCurrentScene();
+
+
+
+    public void render(RenderContext context) {
+        RenderStateHelper.drainExternalGLErrors("VR render");
+        ClientContext.decorationRenderer.updateRenderState();
+        try {
+            renderFrame(context);
+            renderMirror(context);
+        } finally {
+            endFrame();
+        }
+    }
+
+    private void renderMirror(RenderContext context) {
+        context.profiler().push("VR mirror");
+        VRRenderState.startVRMirrorPhase();
+        McRenderTarget.bindWrite(McRenderTarget.mainTarget());
+        //? if >=26.1 {
+        McRenderTarget.clear(McRenderTarget.mainTarget());
+        //?}
+        boolean frameRendered = shouldRenderFrame();
+        MirrorHelper.drawMirror(frameRendered);
+        if (askedForScreenShot) {
+            askedForScreenShot = false;
+            ClientUtils.takeScreenshot(screenshotSource(frameRendered));
+        }
+        context.profiler().pop();
+        GLUtils.checkGLError("post mirror");
+    }
+
+    private RenderTarget screenshotSource(boolean frameRendered) {
+        var window = (WindowExtension) (Object) MC.getWindow();
+        boolean mirrorShown = VRClientSettings.getMirrorMode() != MirrorMode.OFF
+                && window.visor$mcScreenWidth() > 0 && window.visor$mcScreenHeight() > 0;
+        if (mirrorShown || !frameRendered) {
+            return McRenderTarget.mainTarget();
+        }
+        var eye = VRClientSettings.getMirrorEye() == EyeType.LEFT
+                ? getTextureLeftEye() : getTextureRightEye();
+        return eye.getRenderTarget();
+    }
+
+    public void onGameRenderStart(boolean renderLevel) {
+
+        try {
+            //drain GL errors caused by other mods
+            RenderStateHelper.drainExternalGLErrors("render setup");
+            ClientContext.renderer.updateState();
+            GLUtils.checkGLError("post render setup ");
+        } catch (Throwable throwable) {
+            VisorState.destroyVRWithErrorScreen(throwable);
+            return;
+        }
+
+        VRRenderState.startVRGuiPhase();
+
+        McGlState.depthMask(true);
+        McGlState.colorMask(true, true, true, true);
+
+        McRenderTarget.clear(McRenderTarget.mainTarget());
+        McRenderTarget.bindWrite(McRenderTarget.mainTarget());
+
+        ((GameRendererExtension)MC.gameRenderer).visor$setVRGuiVisible(
+                renderLevel && MC.getEntityRenderDispatcher().camera != null
+        );
+    }
+
+    public void updateState() throws Throwable {
+
+        //Window context changed
+        if (McVersionClientUtils.windowHandle() != this.lastWindow) {
+            this.lastWindow = McVersionClientUtils.windowHandle();
+            this.prepareReinit("window recreated");
+        }
+
+        if (!this.reinitTargets) {
+            checkRenderScale();
+        }
+
+        //-----------------
+
+
+        if (this.resizeTargets && !this.reinitTargets) {
+            resizeTargets();
+        }
+
+        if (this.reinitTargets) {
+            createTargets();
+        }
+    }
+
+
+
+    @Override
+    public void init() throws Throwable {
+        RenderStateHelper.drainExternalGLErrors("VR init");
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            setupResolution(stack);
+            setupEyes();
+            setupHiddenArea(stack);
+
+        }
+        updateState();
+    }
+
+
+    public void createTargets() throws Throwable {
+        destroy();
+        GLUtils.checkGLError("destroy on create");
+
+        Minecraft minecraft = Minecraft.getInstance();
+        int eyeWidth = getResolutionWidth();
+        int eyeHeight = getResolutionHeight();
+
+        updateRenderScale();
+        int eyeRenderWidth = scaledEyeSize(eyeWidth);
+        int eyeRenderHeight = scaledEyeSize(eyeHeight);
+
+        List<VRRenderPass> list = VRRenderState.getActivePasses();
+        for (VRRenderPass renderStage : list) {
+            VisorClientImpl.LOGGER.info("VR Displays: {}", renderStage.toString());
+        }
+
+        updateMirrorSize(eyeRenderWidth, eyeRenderHeight);
+
+        mainTarget = new RenderTargetMain();
+        mainTarget.init(
+                eyeRenderWidth, eyeRenderHeight
+        );
+        if (eyeRenderWidth != eyeWidth || eyeRenderHeight != eyeHeight) {
+            mainTarget.initScalingTarget(eyeWidth, eyeRenderHeight);
+        }
+
+        firstPersonTarget = new RenderTargetFirst();
+        if(list.contains(VRRenderPass.CENTER)
+                || ShaderCompatHelper.isShaderActive()
+                && (mirrorWidth > 0 && mirrorHeight > 0)) {
+            firstPersonTarget.init(
+                    mirrorWidth, mirrorHeight
+            );
+        }
+
+        thirdPersonTarget = new RenderTargetThird();
+        if(list.contains(VRRenderPass.THIRD_PERSON)
+                || ShaderCompatHelper.isShaderActive()
+                && (mirrorWidth > 0 && mirrorHeight > 0)) {
+            thirdPersonTarget.init(
+                    mirrorWidth, mirrorHeight
+            );
+        }
+
+
+        VRGuiManagerImpl guiManager = ClientContext.visor.getGuiManager();
+        guiManager.updateResolution();
+        guiTarget = new RenderTargetGUI();
+        guiTarget.init(
+                guiManager.getGuiWidth(),
+                guiManager.getGuiHeight()
+        );
+
+
+        ((GameRendererExtension) minecraft.gameRenderer)
+                .visor$setupClipPlanes();
+        updateProjection();
+
+        try {
+            McRenderTarget.setMainTarget(mainTarget.getTarget());
+
+            VRShaders.setup();
+        } catch (Exception exception1) {
+            LoggerUtils.printError(exception1);
+            System.exit(-1);
+        }
+
+        if (McVersionClientUtils.screen() != null) {
+            McVersionClientUtils.resizeDisplay(minecraft);
+        }
+
+        var windowModif = (WindowExtension) (Object) minecraft.getWindow();
+        long windowPixels = (long) windowModif.visor$mcScreenWidth() * windowModif.visor$mcScreenHeight();
+        long vrPixels = eyeRenderWidth * eyeRenderHeight * 2L;
+
+        if (list.contains(VRRenderPass.CENTER)) {
+            vrPixels += windowPixels;
+        }
+
+
+        VisorClientImpl.LOGGER.info(
+                "[Visor] render targets created:" +
+                "\nEye target: " + eyeWidth + "x" + eyeHeight + " (" + String.format("%.1f", (float) (eyeWidth * eyeHeight) / 1000000.0F) + " MP)" +
+                "\nRender target: " + eyeRenderWidth + "x" + eyeRenderHeight + " at " + Math.round(VRClientSettings.getRenderScaleFactor() * 100.0F) + "% scale (" + String.format("%.1f", (float) (eyeRenderWidth * eyeRenderHeight) / 1000000.0F) + " MP)" +
+                "\nMain window: " + windowModif.visor$mcScreenWidth() + "x" + windowModif.visor$mcScreenHeight() + " (" + String.format("%.1f", (float) windowPixels / 1000000.0F) + " MP)" +
+                "\nPer-frame fill: " + String.format("%.1f", (float) vrPixels / 1000000.0F) + " MP, stencil mask not subtracted"
+        );
+
+        //? if >=26.2 {
+        minecraft.levelExtractor.onResourceManagerReload(minecraft.getResourceManager());
+        //?} else {
+        /*minecraft.levelRenderer.onResourceManagerReload(minecraft.getResourceManager());
+        *///?}
+
+        ShaderCompatHelper.bridge().onVisorTargetsRecreated(eyeRenderWidth, eyeRenderHeight);
+
+        this.reinitTargets = false;
+
+
+    }
+
+    private void resizeTargets() throws Exception {
+        resizeTargets = false;
+
+        int eyeRenderWidth = scaledEyeSize(getResolutionWidth());
+        int eyeRenderHeight = scaledEyeSize(getResolutionHeight());
+
+        updateMirrorSize(eyeRenderWidth, eyeRenderHeight);
+        mainTarget.resize(eyeRenderWidth, eyeRenderHeight);
+
+        // mirror
+        if (firstPersonTarget != null) {
+            firstPersonTarget.resize(mirrorWidth, mirrorHeight);
+        }
+        if (thirdPersonTarget != null) {
+            thirdPersonTarget.resize(mirrorWidth, mirrorHeight);
+        }
+
+        VRGuiManagerImpl guiManager = ClientContext.visor.getGuiManager();
+        if (guiManager.updateResolution()) {
+            guiTarget.resize(
+                    guiManager.getGuiWidth(),
+                    guiManager.getGuiHeight()
+            );
+        }
+
+        McVersionClientUtils.resizeDisplay(Minecraft.getInstance());
+    }
+
+
+    @Override
+    public void prepareReinit(@NotNull String cause) {
+        if (!reinitTargets) {
+            VisorClientImpl.LOGGER.info("Reinit Render Buffers: {}", cause);
+        }
+        this.reinitTargets = true;
+    }
+
+    @Override
+    public void prepareResize(@NotNull String cause) {
+        if (!this.resizeTargets) {
+            VisorClientImpl.LOGGER.info("Resizing Render Buffers: {}", cause);
+        }
+        this.resizeTargets = true;
+    }
+
+    // waits for the slider to settle, a reinit rebuilds every target and shader pipeline
+    private void checkRenderScale() {
+        float requested = VRClientSettings.getRenderScaleFactor();
+        if (requested == this.appliedRenderScaleFactor) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (requested != this.pendingRenderScaleFactor) {
+            this.pendingRenderScaleFactor = requested;
+            this.pendingRenderScaleSince = now;
+        } else if (now - this.pendingRenderScaleSince >= RENDER_SCALE_SETTLE_MS) {
+            prepareReinit("render scale changed");
+        }
+    }
+
+    private void updateRenderScale() {
+        this.appliedRenderScaleFactor = VRClientSettings.getRenderScaleFactor();
+        this.pendingRenderScaleFactor = this.appliedRenderScaleFactor;
+        float maxScale = (float) McGlState.maxSupportedTextureSize()
+                / Math.max(getResolutionWidth(), getResolutionHeight());
+        this.renderScale = Math.min((float) Math.sqrt(Math.max(this.appliedRenderScaleFactor, 0.1F)), maxScale);
+    }
+
+    private int scaledEyeSize(int size) {
+        return Math.min(McGlState.maxSupportedTextureSize(), (int) Math.ceil(size * this.renderScale));
+    }
+
+
+    public Matrix4f getEyeProjection(EyeType eyeType) {
+        return eyeProjection[eyeType.getIndex()];
+    }
+
+    public void updateProjection() {
+        float nearClipPlane = ((GameRendererExtension) MC.gameRenderer)
+                .visor$getNearClipPlane();
+        float farClipPlane = ((GameRendererExtension) MC.gameRenderer)
+                .visor$getFarClipPlane();
+        VRClientSettings.setEyeFovChanged(false);
+        this.eyeProjection[0] = this.getProjectionMatrix(EyeType.LEFT,
+                nearClipPlane,
+                farClipPlane
+        );
+        this.eyeProjection[1] = this.getProjectionMatrix(EyeType.RIGHT,
+                nearClipPlane,
+                farClipPlane
+        );
+    }
+
+    private void updateMirrorSize(int eyeWidth, int eyeHeight) {
+        var windowModif = ((WindowExtension) (Object)
+                Minecraft.getInstance().getWindow());
+        mirrorWidth = Math.max(1,
+                windowModif.visor$mcScreenWidth()
+        );
+        mirrorHeight = Math.max(1,
+                windowModif.visor$mcScreenHeight()
+        );
+        if (VRClientSettings.getMirrorMode() == MirrorMode.MIXED_REALITY) {
+            mirrorWidth = mirrorWidth / 2;
+
+            if (VRClientSettings.isMixedRealityAsGrid2x2()) {
+                mirrorHeight = mirrorHeight / 2;
+            }
+        }
+
+        if (ShaderCompatHelper.sameSizedBuffers()) {
+            mirrorWidth = eyeWidth;
+            mirrorHeight = eyeHeight;
+        }
+    }
+
+
+    @Override
+    public void destroy() {
+        if (mainTarget != null) {
+            mainTarget.destroy();
+        }
+        if (firstPersonTarget != null) {
+            firstPersonTarget.destroy();
+        }
+        if (thirdPersonTarget != null) {
+            thirdPersonTarget.destroy();
+        }
+        if (guiTarget != null) {
+            guiTarget.destroy();
+            guiTarget = null;
+        }
+        McFeatureRenderer.close();
+    }
+
+
+    @Override
+    public void updateOverlayTarget(@NotNull VROverlayScreen overlayScreen) {
+        if(guiTarget == null) return;
+        guiTarget.updateOverlayTarget(overlayScreen);
+    }
+
+    @Override
+    public long getWindowHandle() {
+        //? if >=26.3 {
+        return 0L;
+        //?} else {
+        /*return McVersionClientUtils.windowHandle();
+        *///?}
+    }
+
+    @Override
+    public float[] getHiddenAreaVertices(EyeType eyeType) {
+        return hiddenArea.get(eyeType);
+    }
+}

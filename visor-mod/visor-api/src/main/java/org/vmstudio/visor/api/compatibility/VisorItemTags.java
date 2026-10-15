@@ -1,0 +1,21 @@
+package org.vmstudio.visor.api.compatibility;
+
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.Identifier;
+import net.minecraft.tags.TagKey;
+import net.minecraft.world.item.Item;
+import org.vmstudio.visor.api.compatibility.mcversion.McVersionUtils;
+
+//@TODO use it in more cases with ItemClassifier
+public class VisorItemTags {
+
+    private VisorItemTags() {
+        throw new UnsupportedOperationException("This is an utility class and cannot be instantiated");
+    }
+
+    public static final TagKey<Item> SHIELDS = tag("shields");
+
+    private static TagKey<Item> tag(String name) {
+        return TagKey.create(Registries.ITEM, McVersionUtils.newResourceLoc("visor", name));
+    }
+}

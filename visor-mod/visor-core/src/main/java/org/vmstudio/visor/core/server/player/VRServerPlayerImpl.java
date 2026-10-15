@@ -1,0 +1,128 @@
+package org.vmstudio.visor.core.server.player;
+
+import lombok.Getter;
+import lombok.Setter;
+import org.vmstudio.visor.api.common.HandType;
+import org.vmstudio.visor.api.common.network.buffer.PoseDataBuffer;
+import org.vmstudio.visor.api.common.player.VRPlayer;
+import org.vmstudio.visor.api.common.utils.VRMathUtils;
+import org.vmstudio.visor.api.server.player.VRServerPlayer;
+import org.vmstudio.visor.core.common.player.PoseHistoryImpl;
+import org.vmstudio.visor.extensions.common.ServerPlayerExtension;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Pose;
+
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
+
+
+@Getter
+public class VRServerPlayerImpl extends VisorServerPlayerImpl implements VRServerPlayer {
+
+
+
+    private PoseDataBuffer poseDataBuffer;
+
+    private final PlayerPoseServerImpl poseDataPrevious = new PlayerPoseServerImpl(this, false);
+    private final PlayerPoseServerImpl poseDataRoom = new PlayerPoseServerImpl(this, true);
+    private final PlayerPoseServerImpl poseData = new PlayerPoseServerImpl(this, false);
+
+
+    private final PoseHistoryImpl poseHistoryRoom;
+    private final PoseHistoryImpl poseHistoryTick;
+
+    @Setter
+    private String vrBodyType = "null";
+
+    @Setter
+    private float worldScale = 1.0F;
+    @Setter
+    private float fullHeight = VRPlayer.DEFAULT_FULL_HEIGHT;
+    private float rotationY;
+
+    @Setter
+    private HandType activeHand = HandType.MAIN;
+
+    @Setter
+    private boolean leftHanded;
+
+    private boolean crawling;
+
+    private int offhandSlot;
+    @Setter
+    private float gunAngle = VRPlayer.DEFAULT_GUN_ANGLE;
+
+    @Setter
+    private float rotationYLastSent;
+
+    @Setter
+    private boolean leftHandedLastSent = false;
+    @Setter
+    private String vrBodyLastSent = null;
+    @Setter
+    private float worldScaleLastSent = 1.0f;
+    @Setter
+    private float fullHeightLastSent = VRPlayer.DEFAULT_FULL_HEIGHT;
+    @Setter
+    private float gunAngleLastSent = VRPlayer.DEFAULT_GUN_ANGLE;
+    @Setter
+    private boolean overlayFocused;
+    @Setter
+    private boolean overlayFocusedLastSent;
+
+    private final Set<UUID> knownTrackers = new HashSet<>();
+
+    public VRServerPlayerImpl(ServerPlayer player) {
+        super(player);
+        poseHistoryRoom = new PoseHistoryImpl(poseDataRoom);
+        poseHistoryTick = new PoseHistoryImpl(poseData);
+    }
+
+
+
+    public void receivedPosePacket(PoseDataBuffer poseDataBuffer){
+        poseDataPrevious.copyFrom(poseData);
+
+        this.poseDataBuffer = poseDataBuffer;
+
+        poseDataRoom.update(
+                poseDataBuffer,
+                VRMathUtils.ZERO_VECTOR
+        );
+        poseData.update(
+                poseDataBuffer,
+                mcPlayer.position().toVector3f()
+        );
+
+        var historyEntry = new PlayerPoseServerImpl(this, true);
+        historyEntry.copyFrom(poseDataRoom);
+        poseHistoryRoom.addEntry(historyEntry);
+
+        historyEntry = new PlayerPoseServerImpl(this, false);
+        historyEntry.copyFrom(poseDataPrevious);
+        poseHistoryTick.addEntry(historyEntry);
+
+    }
+
+    @Override
+    public boolean hasPoseData(){
+        return poseDataBuffer != null;
+    }
+
+    public void setCrawling(boolean crawling) {
+        this.crawling = crawling;
+        if(crawling) {
+            mcPlayer.setPose(Pose.SWIMMING);
+        }
+    }
+
+    public void updateRotationY(float rotationY){
+        this.rotationY = rotationY;
+        ((ServerPlayerExtension)mcPlayer).visor$setRotationYCached(rotationY);
+    }
+    public void updateOffhandSlot(int slot){
+        this.offhandSlot = slot;
+        ((ServerPlayerExtension)mcPlayer).visor$setOffhandSlotCached(slot);
+    }
+}

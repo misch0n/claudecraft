@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+
+  "name": "${mod_name}",
+  "description": "${mod_description}",
+  "authors": [
+    "${mod_authors}"
+  ],
+  "icon": "assets/${mod_id}/icon.png",
+  "license": "${mod_license}",
+  "environment": "*",
+  "entrypoints": {
+    "mm:early_risers": [
+      "org.vmstudio.visor.loader.fabric.VisorEarlyEntry"
+    ],
+    "main": [
+      "org.vmstudio.visor.loader.fabric.VisorMod"
+    ]
+  },
+  "mixins": [
+    "visor.mixins.json",
+    "visor.sodium.mixins.json",
+    "visor.replaymod.mixins.json",
+    "visor.flashback.mixins.json",
+    "visor.mixins.fabric.json",
+    "visor.immportals.mixins.json",
+    "visor.dh.mixins.json",
+    "visor.dynamicfps.mixins.json",
+    "visor.iris.mixins.json",
+    "visor.nvidium.mixins.json",
+    "visor.voxy.mixins.json",
+    "visor.blur.mixins.json",
+    "visor.reacharound.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": "${fabric_loader_version_range}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version_range_fabric}",
+    "java": ">=${java_version}"
+  }
+}
