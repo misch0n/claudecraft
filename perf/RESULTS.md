@@ -83,11 +83,14 @@ flat world, 60 s after joining), now with Sodium 0.6.13 really loaded. One run p
 - **Memory:** fixes-on ends 700 MB lower at join+60s than fixes-off (same pattern as R0: ZGC returns
   ~600 MB of committed heap). ImmersiveMC adds ~40 MB RSS at join+60s, within the ~200 MB run-to-run noise.
 - **Crashed:** no (all three).
-- **Open issue:** the ImmersiveMC run logs `IllegalArgumentException: InteractModule 'immersivemc:bag_open' is
-  already added`. The game continued. Vivecraft fires its registration event once and ImmersiveMC adds
-  its handler once, so the duplicate's source is unknown. CI now prints the stack (`perf/immersivemc`
-  `7461fc6a`). If the second call is real on the headset, the backpack and chest-lid interactions may
-  not register (TEST-SESSION-3 step 4 checks).
+- **Found and fixed on `perf/api-register-once` (not in this build):** the ImmersiveMC run logs
+  `IllegalArgumentException: InteractModule 'immersivemc:bag_open' is already added`. Vivecraft runs its add-on
+  registration a second time during the first resource load. ImmersiveMC's second registration throws, and
+  Minecraft treats that as a failed initial load: "Caught error loading resourcepacks, removing all selected
+  resourcepacks", then a full reload. With the new toggle `apiRegisterOnce` (run `38771530766`, commit
+  `41313c31`), the second call is skipped and logged (`[VCPERF] api registration requested again`). The
+  exception and the rollback are gone, and that smoke job took ~4 min instead of ~10. On the headset,
+  mihail.3 without it would deselect resource packs and reload everything at each launch.
 - Other errors as in R0 (update-check version parse, missing upstream `blit_vr` shader, `ModelViewStack
   was empty!`).
 

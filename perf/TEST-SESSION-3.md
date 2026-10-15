@@ -55,9 +55,10 @@ Try each, and tell me works / doesn't / didn't try:
 2. Put items into a furnace or a crafting table with your hand.
 3. Reach over your shoulder to open the backpack (your inventory as a bag).
 
-On the desktop test run, ImmersiveMC logged an error about registering its chest-lid/backpack
-interactions twice. The game kept running, and I'm investigating it. If the chest lid or the backpack
-doesn't work, that's probably the cause.
+Known issue in this build: Vivecraft runs ImmersiveMC's registration twice at startup. Minecraft then
+treats the first resource load as failed: it **deselects your resource packs** and loads everything
+again, so startup is slower. Tell me if your resource packs were switched off. The fix is ready for the
+next build ("Register Add-ons Once").
 
 ## 5. Memory, same routine as before (10 min)
 
