@@ -178,6 +178,10 @@ public class VRPassHelper {
         // render the different vr passes
         List<RenderPass> list = DATA_HOLDER.vrRenderer.getRenderPasses(false);
         DATA_HOLDER.isFirstPass = true;
+        // claudecraft: xrLateFrameWait submits right after the RIGHT eye (QuestCraft c4f3315), so the passes after
+        // it don't delay the frame; off, it submits after all passes like upstream. Exactly one submit per frame.
+        boolean lateSubmit = org.vivecraft.client_vr.perf.PerfHooks.lateFrameWait;
+        boolean submitted = false;
         for (RenderPass renderpass : list) {
             // claudecraft: lazyAuxBuffers, a pass that got needed after setupRenderConfiguration still has its
             // placeholder target, skip it for this frame, the next setupRenderConfiguration gives it its real size
@@ -240,21 +244,33 @@ public class VRPassHelper {
             DATA_HOLDER.isFirstPass = false;
 
             // Submit the frame immediately after eyes are done
-            if(renderpass == RenderPass.RIGHT) {
-                Profiler.get().push("Display/Reproject");
-
-                try {
-                    DATA_HOLDER.vrRenderer.endFrame();
-                } catch (RenderConfigException exception) {
-                    VRSettings.LOGGER.error("Vivecraft: error ending frame: {}", exception.error.getString());
-                }
-                Profiler.get().pop();
-                RenderHelper.checkGLErrorFrame("post submit");
+            if (lateSubmit && renderpass == RenderPass.RIGHT) {
+                submitFrame();
+                submitted = true;
             }
         }
         DATA_HOLDER.vrPlayer.postRender(deltaTracker.getGameTimeDeltaPartialTick(true));
 
         // now we are done with rendering
         Profiler.get().pop();
+
+        if (!submitted) {
+            submitFrame();
+        }
+    }
+
+    /**
+     * claudecraft: the frame submit, shared by both xrLateFrameWait modes
+     */
+    private static void submitFrame() {
+        Profiler.get().push("Display/Reproject");
+
+        try {
+            DATA_HOLDER.vrRenderer.endFrame();
+        } catch (RenderConfigException exception) {
+            VRSettings.LOGGER.error("Vivecraft: error ending frame: {}", exception.error.getString());
+        }
+        Profiler.get().pop();
+        RenderHelper.checkGLErrorFrame("post submit");
     }
 }

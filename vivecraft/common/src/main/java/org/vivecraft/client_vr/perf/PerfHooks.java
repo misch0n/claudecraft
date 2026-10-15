@@ -12,6 +12,12 @@ public final class PerfHooks {
      */
     public static volatile Runnable refreshRateApplier = null;
 
+    /**
+     * {@code xrLateFrameWait} latched at the start of each frame (render thread only), so the frame wait and
+     * the frame submit of one frame always use the same mode, even when the setting changes mid-frame
+     */
+    public static boolean lateFrameWait = false;
+
     public static void onRefreshRateChanged() {
         Runnable applier = refreshRateApplier;
         if (applier != null) {
