@@ -2,6 +2,7 @@
 # Patch the released QuestCraft APK with our Pojlib changes and our Vivecraft jar, then sign it.
 #
 #   apk/build-apk.sh --apk questcraft.apk --jar vivecraft-...-fabric.jar --variant replace|side --out DIR [--tag mihail.N]
+#                    [--immersivemc immersivemc-....jar]
 #
 # We cannot rebuild QuestCraft from source (the Unity launcher needs the Unity Editor), so we take the
 # released APK and replace only the launcher classes listed in apk/patched-sources.txt.
@@ -17,7 +18,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APK="" JAR="" VARIANT="" OUT="" TAG="dev"
+APK="" JAR="" VARIANT="" OUT="" TAG="dev" IMC=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --apk) APK="$(realpath "$2")"; shift 2 ;;
@@ -25,10 +26,12 @@ while [ $# -gt 0 ]; do
     --variant) VARIANT="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
     --tag) TAG="$2"; shift 2 ;;
+    --immersivemc) IMC="$(realpath "$2")"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 [ -f "$APK" ] && [ -f "$JAR" ] && [ -n "$OUT" ] || { echo "need --apk, --jar and --out" >&2; exit 2; }
+[ -z "$IMC" ] || [ -f "$IMC" ] || { echo "--immersivemc: no such file" >&2; exit 2; }
 case "$VARIANT" in replace|side) ;; *) echo "--variant must be replace or side" >&2; exit 2 ;; esac
 : "${ANDROID_HOME:?set ANDROID_HOME}" "${APKTOOL_JAR:?set APKTOOL_JAR}" "${DEX2JAR:?set DEX2JAR}"
 
@@ -121,6 +124,17 @@ cp "$JAR" "$WORK/app/assets/claudecraft/Vivecraft.jar"
   echo "vivecraft_jar=$(basename "$JAR")"
   echo "mc_version=$(unzip -p "$JAR" fabric.mod.json | python3 -c 'import json,sys; m=json.load(sys.stdin).get("depends",{}).get("minecraft",""); print(",".join(m) if isinstance(m,list) else m)' 2>/dev/null || true)"
 } > "$WORK/app/assets/claudecraft/build.properties"
+# Optional ImmersiveMC jar; the launcher installs it as mods/ImmersiveMC-claudecraft.jar (immersivemc.install).
+# Its fabric.mod.json only says minecraft >=1.20.2, so take the version Loom built it for from the manifest.
+if [ -n "$IMC" ]; then
+  cp "$IMC" "$WORK/app/assets/claudecraft/ImmersiveMC.jar"
+  {
+    echo "immersivemc_jar=$(basename "$IMC")"
+    echo "immersivemc_version=$(unzip -p "$IMC" fabric.mod.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null || true)"
+    echo "immersivemc_mc_version=$(unzip -p "$IMC" META-INF/MANIFEST.MF | tr -d '\r' | sed -n 's/^Fabric-Minecraft-Version: //p' || true)"
+  } >> "$WORK/app/assets/claudecraft/build.properties"
+fi
+{ echo; echo "## Bundled (assets/claudecraft/build.properties)"; echo '```'; cat "$WORK/app/assets/claudecraft/build.properties"; echo '```'; } >> "$OUT/patch-report-$VARIANT.md"
 
 # 4. Side-by-side variant: rename the package, authorities, app-defined permissions and the label.
 if [ "$VARIANT" = side ]; then

@@ -1,0 +1,17 @@
+pluginManagement {
+    repositories {
+        maven { url "https://maven.fabricmc.net/" }
+        maven { url "https://maven.architectury.dev/" }
+        maven { url "https://maven.minecraftforge.net/" }
+        gradlePluginPortal()
+    }
+}
+
+include("common")
+// claudecraft: include only the enabled platforms, so a Fabric-only build never resolves Forge/NeoForge
+def enabledPlatforms = providers.gradleProperty("enabled_platforms").getOrElse("fabric,forge,neoforge").split(",")*.trim()
+if (enabledPlatforms.contains("fabric")) include("fabric")
+if (enabledPlatforms.contains("forge")) include("forge")
+if (enabledPlatforms.contains("neoforge")) include("neoforge")
+
+rootProject.name = "immersivemc"

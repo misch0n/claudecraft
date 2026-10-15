@@ -39,7 +39,11 @@ QuestCraft's OpenXR provider (CLAUDE.md, Repo layout). The Phase 1 and 2 toggles
 result on the new base, run the headset smoke test (`1.3.15-mihail.0`, then `mihail.2`): VR starts,
 controllers work, a world loads, no crash in 10 minutes.
 
-Next, separate task: bake ImmersiveMC (`immersivemc/`, parked) into the build, behind its own toggle.
+**ImmersiveMC** (`perf/immersivemc`): CI builds `immersivemc/` for Fabric against our Vivecraft jar and the
+APK bundles it. The launcher installs it as `mods/ImmersiveMC-claudecraft.jar` at each launch; key
+`immersivemc.install`, default **on** (off deletes that file). `[VCPERF] config` logs `immersivemc=<version or
+absent>`. **Measure:** memory (`load`, `settled`, `long`) and frame time with it on vs off. ImmersiveMC's own
+in-game config can also turn off single immersives.
 
 ---
 
@@ -92,7 +96,7 @@ caused a problem.
 | 2c Cache OpenXR bound sources per action; refresh on interaction-profile change | `cacheInputOrigins` | on | V8 |
 | 2d `glGetError` checks only when debugging | `glErrorChecks` | off | V9, L4 |
 | 2e Linear filtering for Vivecraft's own quads despite LTW's LINEAR→NEAREST remap | `ltwLinearFilterFix` | on | L3 |
-| 2f XR thread hint (`XR_KHR_android_thread_settings`) and CPU/GPU level hint (`XR_EXT_performance_settings`) | `xrPerfHints` | off | V13 |
+| 2f XR thread hint (`XR_KHR_android_thread_settings`) and CPU/GPU level hint (`XR_EXT_performance_settings`) | `xrPerfHints` | on | V13 |
 
 **Measure:** frame-time median and p95, stale frames, CPU level, thermals over 20 min at 90 vs 120 Hz.
 
@@ -112,8 +116,23 @@ is a symptom, and removing it alone saves nothing (FINDINGS V11).
    `updateChunks`, `uploadChunks` and `tickVisibleRenders` (for example with `@WrapWithCondition`).
    Fall back to per-eye culling when the eyes are in different sections.
 3. Optionally reuse the LEFT eye's visible-entity list for the RIGHT eye, and compute weather columns once.
-4. Toggle `sharedEyeCulling`, default **off** until validated. Pin the Mixin targets to Sodium 0.6.13
-   with `require` so a Sodium update fails loudly.
+4. Toggle `sharedEyeCulling`, default **on** (every feature defaults to on, user decision 2026-10-15).
+   Pin the Mixin targets to Sodium 0.6.13 with `require` so a Sodium update fails loudly.
+
+**Status (`perf/shared-eye-culling`, in `mihail.3`):** steps 1, 2 and 4 done; step 3 not done (entity
+lists are cheap at the user's render distance; revisit if the `[VCPERF] cull` line says otherwise).
+- The union frustum is built from both eyes' projection matrices and poses (works for any provider, not
+  only `XrFovf`). The apex distance is the smallest that keeps every plane outside both eye apexes.
+- It applies through a `WrapMethod` on `LevelRenderer.prepareCullFrustum`; the second eye pass cancels
+  Sodium's `setupTerrain`.
+- It falls back to per-eye culling for the frame when the eyes and the apex are in different sections,
+  the eyes are not parallel, or a projection is unusable.
+- Instead of `require`, the Sodium hook is optional. If it stops matching, the feature switches itself
+  off and `[VCPERF] cull` reports `sodiumHook=false`. A hard failure would crash the game whenever
+  QuestCraft's live `mods.json` moves Sodium.
+- The `[VCPERF] cull` line (every 30 s) reports frames shared or per eye, fallback reasons, and Sodium
+  `setupTerrain` time for the first and second eye pass. Compare it on vs off.
+- CI smoke now really loads Sodium 0.6.13 (before, it was compile-only) and fails if no frame was shared.
 
 **Validation:** no missing or flickering chunks at either eye's edges (fast head turns, cliffs, walls),
 CPU frame time down, no GPU regression. Desktop pre-check with `nullvr` and the profiler (trust only the
@@ -135,8 +154,9 @@ CPU side).
 - **Unity:** `unload()` instead of `pause()` once the game is up (frees Unity's memory; risky because the
   JVM runs on a Unity-created thread). The microphone loop needs a Unity rebuild; meanwhile the user can
   revoke the microphone permission.
-- **ModernFix for 1.21.5:** check whether a compatible release exists, and measure it.
-- **Upstream cherry-picks:** menu world load speed-up (upstream `62535ff0`).
+- **ModernFix for 1.21.5:** checked 2026-10-15: no 1.21.5 Fabric build found (official ModernFix stopped
+  Fabric builds; the mVUS fork lists 1.21.6+). Dropped unless one appears.
+- **Upstream cherry-picks:** menu world load speed-up (upstream `62535ff0`): already in the 1.3.15 base.
 
 ## Reporting format (every checkpoint)
 

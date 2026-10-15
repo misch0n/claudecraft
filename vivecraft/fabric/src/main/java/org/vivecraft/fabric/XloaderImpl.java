@@ -37,6 +37,11 @@ public class XloaderImpl implements Xloader {
         return "no version";
     }
 
+    public static String getModVersionById(String modId) {
+        return FabricLoader.getInstance().getModContainer(modId)
+            .map(c -> c.getMetadata().getVersion().getFriendlyString()).orElse(null);
+    }
+
     public static Path getConfigPath(String fileName) {
         return FabricLoader.getInstance().getConfigDir().resolve(fileName);
     }

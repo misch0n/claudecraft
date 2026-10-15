@@ -55,6 +55,17 @@ public interface Xloader {
     }
 
     /**
+     * claudecraft: version of another loaded mod, for the {@code [VCPERF] config} line
+     *
+     * @param modId modId to check
+     * @return version of {@code modId}, or {@code null} if it is not loaded
+     */
+    @ExpectPlatform
+    static String getModVersionById(String modId) {
+        return null;
+    }
+
+    /**
      * asks the mod loader for the config folder, and resolves the given file there
      *
      * @param file file to get the path for

@@ -50,6 +50,7 @@ public final class ClaudecraftConfig {
     public static final String UNITY_PAUSE_IN_GAME = "unity.pauseInGame";
     public static final String UNITY_PAUSE_DELAY_MS = "unity.pauseDelayMs";
     public static final String VIVECRAFT_INSTALL_BUNDLED = "vivecraft.installBundled";
+    public static final String IMMERSIVEMC_INSTALL = "immersivemc.install";
 
     public static final String POLICY_CLAUDECRAFT = "claudecraft";
     public static final String POLICY_ORIGINAL = "original";
@@ -68,6 +69,7 @@ public final class ClaudecraftConfig {
             {UNITY_PAUSE_IN_GAME, "true", "Pause the Unity launcher once Minecraft is in VR and keep it paused while the game runs."},
             {UNITY_PAUSE_DELAY_MS, "10000", "Milliseconds to wait after Minecraft reports VR ready before pausing Unity (Unity fades out and shuts its XR down first)."},
             {VIVECRAFT_INSTALL_BUNDLED, "true", "Copy the Vivecraft jar bundled in this APK over the instance's Vivecraft mod at every launch. Turn off to test a jar pushed by hand."},
+            {IMMERSIVEMC_INSTALL, "true", "Install the ImmersiveMC mod bundled in this APK as mods/ImmersiveMC-claudecraft.jar at every launch. false deletes that file, so ImmersiveMC is not loaded. Its in-game config can also turn off single immersives."},
     };
 
     private static final String HEADER =

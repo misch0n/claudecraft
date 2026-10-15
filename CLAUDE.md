@@ -41,6 +41,7 @@ is standing context and rules.
   branch `QuestCraft-6.0.0`, fetched live at every launch:
   - Vivecraft **1.2.5** (release `1.21.5-1.2.5-OpenXR`) in the official app. **Our build ships Vivecraft
     1.3.15** (see `vivecraft/` below) and installs it over the downloaded one.
+  - Not in `mods.json`: **our build adds ImmersiveMC 1.6.0-beta1** (`immersivemc/`, key `immersivemc.install`).
   - Sodium **0.6.13**, Lithium 0.16.3, FerriteCore 8.0.0, ImmediatelyFast 1.9.7, MoreCulling 1.3.1,
     EntityCulling 1.9.5, BadOptimizations 2.4.1, Krypton 0.2.9, Simple Voice Chat 2.6.11, bbrb 1.5.2,
     Fabric API 0.128.2, Cloth Config
@@ -66,7 +67,7 @@ is standing context and rules.
 | Path | What |
 |---|---|
 | `vivecraft/` | Vivecraft 1.21.5-1.3.15 with QuestCraft's OpenXR provider: QuestCraftPlusPlus/VivecraftMod `OpenXR-1.21.5` @ `612a11ca` (upstream 1.3.4 + OpenXR, unreleased) merged with upstream Vivecraft/VivecraftMod `1.21.5-1.3.15` @ `86da32bd`. The merge is local commit `463d0f64` (its message lists the conflict resolution), squash-merged as a git subtree; our changes are normal commits. The 1.2.5 line (base `6d9b96af`, the `1.21.5-1.2.5-OpenXR` release) is kept on branches `archive/vivecraft-1.2.5` (integration) and `archive/vivecraft-1.2.5-main`. CI still compares the jar with the 1.2.5 release jar, for information only. |
-| `immersivemc/` | ImmersiveMC (hammy275/immersive-mc) @ `8713ae83`, branch `1.21.5`, vendored without the demo GIFs. **Parked:** not built or bundled yet (see `immersivemc/IMPORTED.md`). |
+| `immersivemc/` | ImmersiveMC (hammy275/immersive-mc) @ `8713ae83`, branch `1.21.5`, vendored without the demo GIFs. CI builds it for Fabric against our Vivecraft jar (`-Pvivecraft_jar`); the APK bundles it and the launcher installs it as `mods/ImmersiveMC-claudecraft.jar` (`immersivemc.install`). Our changes are listed in `immersivemc/IMPORTED.md`. |
 | `pojlib/` | QuestCraftPlusPlus/Pojlib @ `c6566d5` (`QuestCraft-6.0.0`), vendored without binaries. The 6.0.0 APK was built from an older commit (≈`092c27e`, 2025-05-30); the one later change to a class we replace is reverted (see `pojlib/IMPORTED.md`). Not built as a whole. |
 | `apk/` | APK pipeline: `build-apk.sh`, `patched-sources.txt` (the launcher classes we change), `rename_package.py`, `compare_jars.py`, and the debug signing key |
 | `.github/workflows/build.yml` | CI. Builds the jar and the APKs; a `mihail.N` tag publishes a GitHub release |
@@ -102,6 +103,7 @@ is standing context and rules.
 | Default configs written on instance creation | `install/Installer.java#moveLocalAssets`, `src/main/assets/` |
 | Unity host activity (pause/resume) | `UnityPlayerActivity.java` |
 | Launcher log (deleted at every start upstream) | `util/Logger.java` |
+| Our settings (`claudecraft.properties`); bundled jars installed at each launch | `util/ClaudecraftConfig.java`; `util/BundledVivecraft.java`, `util/BundledImmersiveMC.java` |
 
 The Unity C# (QCXR-XR-Wrapper) is compiled to native code inside the APK, so we cannot change it.
 
@@ -111,7 +113,8 @@ The Unity C# (QCXR-XR-Wrapper) is compiled to native code inside the APK, so we 
    - Vivecraft changes: a `VRSettings` option, visible in the VR settings GUI ("Performance and
      stability" page).
    - Launcher changes: a key in `claudecraft.properties` in the app's files dir.
-   - Defaults are listed in `PLAN.md`; anything not listed defaults to the original behaviour.
+   - Every feature defaults to **on** (user decision, 2026-10-15); the switch turns it off for A/B tests.
+     Defaults are listed in `PLAN.md`.
    - One build must allow A/B testing in a single headset session.
 2. **Log the config.** On VR init, log one line prefixed `[VCPERF]` with the build tag and every perf
    toggle's value. The launcher logs its effective JVM arguments and properties into `latestlog.txt`. Any

@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentSkipListMap;
 
 /**
@@ -54,12 +55,13 @@ public final class PerfProbe {
             return;
         }
         VRSettings.LOGGER.info(
-            "[VCPERF] config reason={} build={} perfMemoryLog={} freeMenuWorldInGame={} " +
+            "[VCPERF] config reason={} build={} immersivemc={} perfMemoryLog={} freeMenuWorldInGame={} " +
                 "shareOutlineTargets={} lazyAuxBuffers={} fixSupporterLeak={} clearTrackerRefs={} " +
                 "xrStartupRetry={} xrSessionStateHandling={} xrLateFrameWait={} xrRefreshRate={} " +
                 "cacheInputOrigins={} glErrorChecks={} ltwLinearFilterFix={} xrPerfHints={} sharedEyeCulling={} " +
                 "menuWorldSelection={} {}",
-            reason, Xloader.getModVersion(), s.perfMemoryLog, s.freeMenuWorldInGame,
+            reason, Xloader.getModVersion(), Objects.requireNonNullElse(Xloader.getModVersionById("immersivemc"), "absent"),
+            s.perfMemoryLog, s.freeMenuWorldInGame,
             s.shareOutlineTargets, s.lazyAuxBuffers, s.fixSupporterLeak, s.clearTrackerRefs,
             s.xrStartupRetry, s.xrSessionStateHandling, s.xrLateFrameWait, s.xrRefreshRate,
             s.cacheInputOrigins, s.glErrorChecks, s.ltwLinearFilterFix, s.xrPerfHints, s.sharedEyeCulling,
