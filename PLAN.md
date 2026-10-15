@@ -45,6 +45,13 @@ APK bundles it. The launcher installs it as `mods/ImmersiveMC-claudecraft.jar` a
 absent>`. **Measure:** memory (`load`, `settled`, `long`) and frame time with it on vs off. ImmersiveMC's own
 in-game config can also turn off single immersives.
 
+**Register add-ons once** (`perf/api-register-once`, toggle `apiRegisterOnce`, default **on**): with ImmersiveMC,
+CI logged `InteractModule 'immersivemc:bag_open' is already added` from `VRClientAPIImpl.processRegistrationEvent`
+during the first resource load. Minecraft treats that as a failed initial load: it deselects every resource
+pack and loads again (slower start, a second load peak). The toggle runs the registration handlers once and
+logs `[VCPERF] api registration requested again` with a stack if something calls it a second time. If CI
+still shows the duplicate error with the toggle on, ImmersiveMC added its handler twice instead.
+
 ---
 
 ## Phase 1 — Stability and memory (first sideload build, `mihail.1`)

@@ -198,7 +198,7 @@ jobs:
         run: |
           printf 'onboardAccessibility:false\nrenderDistance:4\nsimulationDistance:5\npauseOnLostFocus:false\nnarrator:0\ntutorialStep:none\nskipMultiplayerWarning:true\nsoundCategory_master:0.0\n' > options.txt
           if [ "${{ matrix.variant }}" = fixes-off ]; then
-            off='"freeMenuWorldInGame":"false","shareOutlineTargets":"false","lazyAuxBuffers":"false","fixSupporterLeak":"false","clearTrackerRefs":"false","xrStartupRetry":"false","xrSessionStateHandling":"false","xrLateFrameWait":"false","cacheInputOrigins":"false","glErrorChecks":"true","ltwLinearFilterFix":"false","xrRefreshRate":"MAX","xrPerfHints":"false","sharedEyeCulling":"false","perfDefaultsVersion":"1",'
+            off='"freeMenuWorldInGame":"false","shareOutlineTargets":"false","lazyAuxBuffers":"false","fixSupporterLeak":"false","clearTrackerRefs":"false","xrStartupRetry":"false","xrSessionStateHandling":"false","xrLateFrameWait":"false","cacheInputOrigins":"false","glErrorChecks":"true","ltwLinearFilterFix":"false","xrRefreshRate":"MAX","xrPerfHints":"false","sharedEyeCulling":"false","apiRegisterOnce":"false","perfDefaultsVersion":"1",'
           else
             off=''
           fi
@@ -284,6 +284,8 @@ jobs:
           grep -E '\[VCPERF\] (config|mem label=(vr_init|join|join\+60s|leave))' "$log" | cut -c1-330 | head -8 || true
           grep -E '\[VCPERF\] cull' "$log" | sed 's/.*\[VCPERF\]/[VCPERF]/' | cut -c1-330 | head -4 || true
           grep -n -E 'ERROR\]|Exception' "$log" | grep -v -i -E 'sound|openal|realms|telemetry|narrator' | cut -c1-250 | head -15 || true
+          # ImmersiveMC registers its Vivecraft interact modules once; show where a duplicate comes from
+          grep -n -B3 -A14 'is already added and should not be added again' "$log" | cut -c1-220 | head -40 || true
           [ -f fabric/run/logs/latest.log ] || { echo "no game log; end of client.log:"; tail -25 client.log | cut -c1-300; }
           echo "=== END SUMMARY (fail=$fail) ==="
           exit $fail

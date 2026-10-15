@@ -41,6 +41,9 @@ public class GuiPerformanceSettings extends GuiListScreen {
         entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.LTW_LINEAR_FILTER_FIX));
         entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.SHARED_EYE_CULLING));
 
+        entries.add(new SettingsList.CategoryEntry(Component.translatable("vivecraft.options.performance.startup")));
+        entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.API_REGISTER_ONCE));
+
         entries.add(new SettingsList.CategoryEntry(Component.translatable("vivecraft.options.performance.diagnostics")));
         entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.PERF_MEMORY_LOG));
         return entries;
