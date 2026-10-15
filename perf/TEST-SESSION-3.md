@@ -1,18 +1,20 @@
-# Test session 3: shared eye culling and ImmersiveMC (`1.3.15-mihail.3`)
+# Test session 3: shared eye culling and ImmersiveMC (`1.3.15-mihail.4`)
 
 Total time: about 45 minutes. Same setup as before (Mac, `adb`, repo root, headset plugged in). If
 anything crashes, run step 0 before relaunching.
 
-The build adds two things on top of `mihail.2`, both on by default:
+The build adds these on top of `mihail.2`, all on by default:
 - **Shared Eye Culling**: the right eye reuses the visible-chunk lists the left eye computed, instead of
   working them out again. It saves CPU time per frame. The risk is chunks missing or flickering at the
   edge of one eye.
 - **ImmersiveMC**: you use chests, furnaces, crafting tables and the like with your hands. Our APK
   installs it; QuestCraft's own mod list doesn't have it.
+- **Register Add-ons Once**: fixes a startup bug where Vivecraft registered ImmersiveMC twice, which made
+  Minecraft deselect your resource packs and load everything a second time (`mihail.3` had the bug).
 
-Get the side APK from the artifact `questcraft-claudecraft-apk` of Actions run
-[38765161759](https://github.com/misch0n/claudecraft/actions/runs/38765161759) (Summary page, scroll to
-Artifacts), or push the tag `mihail.3` from the Mac to get a release.
+Get the side APK from the artifact `questcraft-claudecraft-apk` of the latest Actions run on
+`integration/mihail.4` (Summary page, scroll to Artifacts), or push the tag `mihail.4` from the Mac to get a
+release.
 
 ## 0. After any crash (2 min)
 
@@ -22,7 +24,7 @@ PKG=com.qcxr.qcxr.claudecraft tools/forensics.sh
 
 ## 1. Install and check the build (5 min)
 
-1. `tools/install.sh ~/Downloads/questcraft-claudecraft-1.3.15-mihail.3-side.apk` (installs over the
+1. `tools/install.sh ~/Downloads/questcraft-claudecraft-1.3.15-mihail.4-side.apk` (installs over the
    previous side build and keeps its data).
 2. Open QuestCraft CC. On its menu, before pressing Play: `PKG=com.qcxr.qcxr.claudecraft tools/mem.sh launcher`.
 3. Press Play. Title screen: `PKG=com.qcxr.qcxr.claudecraft tools/mem.sh title`.
@@ -55,10 +57,7 @@ Try each, and tell me works / doesn't / didn't try:
 2. Put items into a furnace or a crafting table with your hand.
 3. Reach over your shoulder to open the backpack (your inventory as a bag).
 
-Known issue in this build: Vivecraft runs ImmersiveMC's registration twice at startup. Minecraft then
-treats the first resource load as failed: it **deselects your resource packs** and loads everything
-again, so startup is slower. Tell me if your resource packs were switched off. The fix is ready for the
-next build ("Register Add-ons Once").
+Also tell me whether your resource packs are still selected after launching (they should be).
 
 ## 5. Memory, same routine as before (10 min)
 
