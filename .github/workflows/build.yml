@@ -92,7 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # fixes-on: our defaults and our launcher's JVM heap policy, plus sharedEyeCulling (default off) so CI runs it.
+        # fixes-on: our defaults (every feature on) and our launcher's JVM heap policy.
         # fixes-off: every claudecraft toggle off (= the original Vivecraft code paths) and QuestCraft-like JVM flags.
         variant: [fixes-on, fixes-off]
     steps:
@@ -125,9 +125,9 @@ jobs:
         run: |
           printf 'onboardAccessibility:false\nrenderDistance:4\nsimulationDistance:5\npauseOnLostFocus:false\nnarrator:0\ntutorialStep:none\nskipMultiplayerWarning:true\nsoundCategory_master:0.0\n' > options.txt
           if [ "${{ matrix.variant }}" = fixes-off ]; then
-            off='"freeMenuWorldInGame":"false","shareOutlineTargets":"false","lazyAuxBuffers":"false","fixSupporterLeak":"false","clearTrackerRefs":"false","xrStartupRetry":"false","xrSessionStateHandling":"false","xrLateFrameWait":"false","cacheInputOrigins":"false","glErrorChecks":"true","ltwLinearFilterFix":"false","xrRefreshRate":"MAX",'
+            off='"freeMenuWorldInGame":"false","shareOutlineTargets":"false","lazyAuxBuffers":"false","fixSupporterLeak":"false","clearTrackerRefs":"false","xrStartupRetry":"false","xrSessionStateHandling":"false","xrLateFrameWait":"false","cacheInputOrigins":"false","glErrorChecks":"true","ltwLinearFilterFix":"false","xrRefreshRate":"MAX","xrPerfHints":"false","sharedEyeCulling":"false","perfDefaultsVersion":"1",'
           else
-            off='"sharedEyeCulling":"true",'
+            off=''
           fi
           printf '{%s"vrEnabled":"true","rememberVr":"true","stereoProviderPluginID":"NULLVR","alwaysShowUpdates":"false"}\n' "$off" > config/vivecraft-client-config.json
           cat config/vivecraft-client-config.json

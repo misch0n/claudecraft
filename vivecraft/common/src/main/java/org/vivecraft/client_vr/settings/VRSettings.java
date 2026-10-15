@@ -771,9 +771,12 @@ public class VRSettings {
     @SettingField(VrOptions.LTW_LINEAR_FILTER_FIX)
     public boolean ltwLinearFilterFix = true;
     @SettingField(VrOptions.XR_PERF_HINTS)
-    public boolean xrPerfHints = false;
+    public boolean xrPerfHints = true;
     @SettingField(VrOptions.SHARED_EYE_CULLING)
-    public boolean sharedEyeCulling = false;
+    public boolean sharedEyeCulling = true;
+    // hidden: 1 = configs saved before every perf feature defaulted to on have been switched on once
+    @SettingField
+    public int perfDefaultsVersion = 0;
     //
 
     public ServerOverrides overrides = new ServerOverrides();
@@ -804,6 +807,14 @@ public class VRSettings {
 
         // Load settings from the file
         this.loadOptions();
+
+        // claudecraft: every perf feature defaults to on. Configs from older builds saved these as off, so
+        // turn them on once; switching one off afterwards is kept (saved together with perfDefaultsVersion)
+        if (this.perfDefaultsVersion < 1) {
+            this.xrPerfHints = true;
+            this.sharedEyeCulling = true;
+            this.perfDefaultsVersion = 1;
+        }
 
         // reset fbt if general trackers were used last time
         if (this.unlabeledTrackersUsed) {
