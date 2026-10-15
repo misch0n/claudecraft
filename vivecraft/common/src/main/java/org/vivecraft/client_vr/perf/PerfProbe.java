@@ -59,12 +59,14 @@ public final class PerfProbe {
                 "shareOutlineTargets={} lazyAuxBuffers={} fixSupporterLeak={} clearTrackerRefs={} " +
                 "xrStartupRetry={} xrSessionStateHandling={} xrLateFrameWait={} xrRefreshRate={} " +
                 "cacheInputOrigins={} glErrorChecks={} ltwLinearFilterFix={} xrPerfHints={} sharedEyeCulling={} " +
+                "apiRegisterOnce={} " +
                 "menuWorldSelection={} {}",
             reason, Xloader.getModVersion(), Objects.requireNonNullElse(Xloader.getModVersionById("immersivemc"), "absent"),
             s.perfMemoryLog, s.freeMenuWorldInGame,
             s.shareOutlineTargets, s.lazyAuxBuffers, s.fixSupporterLeak, s.clearTrackerRefs,
             s.xrStartupRetry, s.xrSessionStateHandling, s.xrLateFrameWait, s.xrRefreshRate,
             s.cacheInputOrigins, s.glErrorChecks, s.ltwLinearFilterFix, s.xrPerfHints, s.sharedEyeCulling,
+            s.apiRegisterOnce,
             s.menuWorldSelection,
             EXTRA);
         if (!jvmLogged) {

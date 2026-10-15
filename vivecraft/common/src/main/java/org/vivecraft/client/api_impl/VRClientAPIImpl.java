@@ -14,6 +14,7 @@ import org.vivecraft.client.api_impl.event.VivecraftClientRegistrationEventImpl;
 import org.vivecraft.client_vr.ClientDataHolderVR;
 import org.vivecraft.client_vr.VRState;
 import org.vivecraft.client_vr.gameplay.screenhandlers.KeyboardHandler;
+import org.vivecraft.client_vr.settings.VRSettings;
 import org.vivecraft.common.api_impl.data.VRPoseHistoryImpl;
 
 import javax.annotation.Nullable;
@@ -42,6 +43,15 @@ public final class VRClientAPIImpl implements VRClientAPI {
 
     public void processRegistrationEvent() {
         synchronized (this.registrationHandlers) {
+            // claudecraft: apiRegisterOnce, a second call ran the handlers again and the duplicate module made
+            // Minecraft roll back the initial resource load
+            if (this.registrationClosed && ClientDataHolderVR.getInstance().vrSettings != null &&
+                ClientDataHolderVR.getInstance().vrSettings.apiRegisterOnce)
+            {
+                VRSettings.LOGGER.warn("[VCPERF] api registration requested again, skipped (handlers already ran)",
+                    new Throwable("second registration call"));
+                return;
+            }
             this.registrationClosed = true;
             this.registrationHandlers.forEach(event -> event.accept(VivecraftClientRegistrationEventImpl.INSTANCE));
         }

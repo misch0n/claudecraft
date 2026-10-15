@@ -774,6 +774,8 @@ public class VRSettings {
     public boolean xrPerfHints = true;
     @SettingField(VrOptions.SHARED_EYE_CULLING)
     public boolean sharedEyeCulling = true;
+    @SettingField(VrOptions.API_REGISTER_ONCE)
+    public boolean apiRegisterOnce = true;
     // hidden: 1 = configs saved before every perf feature defaulted to on have been switched on once
     @SettingField
     public int perfDefaultsVersion = 0;
@@ -2627,7 +2629,8 @@ public class VRSettings {
         GL_ERROR_CHECKS(OptionType.BOOLEAN),
         LTW_LINEAR_FILTER_FIX(OptionType.BOOLEAN),
         XR_PERF_HINTS(OptionType.BOOLEAN),
-        SHARED_EYE_CULLING(OptionType.BOOLEAN);
+        SHARED_EYE_CULLING(OptionType.BOOLEAN),
+        API_REGISTER_ONCE(OptionType.BOOLEAN);
         private final OptionType type;
         private final float valueStep;
         private final float valueMin;
