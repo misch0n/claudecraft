@@ -1,0 +1,141 @@
+package com.hammy275.immersivemc;
+
+import com.hammy275.immersivemc.api.common.ImmersiveMCRegistrationEvent;
+import com.hammy275.immersivemc.api.common.immersive.ImmersiveHandler;
+import com.hammy275.immersivemc.api.common.immersive.petting.PettingHandler;
+import com.hammy275.immersivemc.client.subscribe.ClientLogicSubscriber;
+import com.hammy275.immersivemc.common.config.ActiveConfig;
+import com.hammy275.immersivemc.common.immersive.handler.ImmersiveHandlers;
+import com.hammy275.immersivemc.common.network.Network;
+import com.hammy275.immersivemc.common.network.packet.*;
+import com.hammy275.immersivemc.common.subscribe.CommonSubscriber;
+import com.hammy275.immersivemc.common.ticker.BottleAndBucketTicker;
+import com.hammy275.immersivemc.common.ticker.TickerInit;
+import com.hammy275.immersivemc.server.ServerSubscriber;
+import com.hammy275.immersivemc.server.command.ImmersiveMCCommand;
+import com.hammy275.immersivemc.server.immersive.petting.AnythingLivingPettingHandler;
+import com.hammy275.immersivemc.server.immersive.petting.VanillaMobsPettingHandler;
+import com.hammy275.immersivemc.server.ticker.*;
+import com.hammy275.immersivemc.server.ticker.hand.ArmorTicker;
+import com.hammy275.immersivemc.server.ticker.hand.ButtonPushTicker;
+import com.hammy275.immersivemc.server.ticker.hand.CauldronTicker;
+import com.hammy275.immersivemc.server.ticker.hand.PetTicker;
+import net.minecraft.client.KeyMapping;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import java.util.function.Consumer;
+
+public class ImmersiveMC {
+
+    public static final String MOD_ID = "immersivemc";
+    public static final Logger LOGGER = LogManager.getLogger(MOD_ID);
+
+    public static final String globalKeyCategory = "key.categories." + MOD_ID;
+    public static final String vrKeyCategory = "key.categories." + MOD_ID + ".vr";
+    public static KeyMapping SUMMON_BACKPACK = null;
+    public static KeyMapping OPEN_SETTINGS = null;
+    public static KeyMapping RANGED_GRAB_KEY = null;
+
+    public static final Consumer<ImmersiveMCRegistrationEvent<ImmersiveHandler>> handlerIMCRegistrationHandler =
+            (event) -> event.register(
+                    ImmersiveHandlers.anvilHandler, ImmersiveHandlers.barrelHandler, ImmersiveHandlers.beaconHandler,
+                    ImmersiveHandlers.brewingStandHandler, ImmersiveHandlers.chestHandler, ImmersiveHandlers.chiseledBookshelfHandler,
+                    ImmersiveHandlers.craftingHandler, ImmersiveHandlers.enchantingTableHandler, ImmersiveHandlers.furnaceHandler,
+                    ImmersiveHandlers.hopperHandler, ImmersiveHandlers.ironFurnacesFurnaceHandler, ImmersiveHandlers.jukeboxHandler,
+                    ImmersiveHandlers.leverHandler, ImmersiveHandlers.repeaterHandler, ImmersiveHandlers.shulkerBoxHandler,
+                    ImmersiveHandlers.smithingTableHandler, ImmersiveHandlers.tcCraftingStationHandler, ImmersiveHandlers.lecternHandler,
+                    ImmersiveHandlers.trapdoorHandler, ImmersiveHandlers.apothSalvagingTableHandler, ImmersiveHandlers.doorHandler,
+                    ImmersiveHandlers.grindstoneHandler, ImmersiveHandlers.visualWorkbenchHandler, ImmersiveHandlers.hitboxesHandler,
+                    ImmersiveHandlers.bagHandler
+            );
+
+    public static final Consumer<ImmersiveMCRegistrationEvent<PettingHandler<?>>> pettingIMCRegistrationHandler =
+            (event) -> event.register(
+                    new VanillaMobsPettingHandler<>(),
+                    new AnythingLivingPettingHandler<>() // Should always be last so other ImmersiveMC petting handlers go first
+            );
+
+    public ImmersiveMC() {
+    }
+
+    public static void init() {
+        if (Platform.isClient()) {
+            // ClientLogic
+            PlatformClient.registerOnClientJoinListener(ClientLogicSubscriber::onClientLogin);
+            PlatformClient.registerOnClientTickListener(ClientLogicSubscriber::onClientTick);
+            PlatformClient.registerOnClientDisconnectListener(ClientLogicSubscriber::onDisconnect);
+            PlatformClient.registerOnClientTickListener(CommonSubscriber::globalTick);
+        }
+
+        // ServerSubscriber
+        Platform.registerServerPostTickListener(ServerSubscriber::onServerTick);
+        Platform.registerServerPlayerPostTickListener(ServerSubscriber::onPlayerTick);
+        Platform.registerServerPlayerJoinListener(ServerSubscriber::onPlayerJoin);
+        Platform.registerServerPlayerLeaveListener(ServerSubscriber::onPlayerLeave);
+        Platform.registerServerPlayerPostTickListener(CommonSubscriber::onPlayerTick);
+        Platform.registerServerPostTickListener(CommonSubscriber::globalTick);
+        
+        // Commands
+        Platform.registerCommands(dispatcher -> {
+            ImmersiveMCCommand.createCommand(dispatcher);
+        });
+
+        if (Platform.isClient()) {
+            ImmersiveMCClient.init();
+        }
+        networkSetup();
+        ActiveConfig.createDefaultConfigFilesIfNotFound();
+
+        // Add common and server tickers
+        TickerInit.addCommonTicker(new BottleAndBucketTicker());
+
+        TickerInit.addServerTicker(new ArmorTicker());
+        TickerInit.addServerTicker(new ButtonPushTicker());
+        TickerInit.addServerTicker(new CampfireTicker());
+        TickerInit.addServerTicker(new CauldronTicker());
+        TickerInit.addServerTicker(new FeedAnimalsTicker());
+        TickerInit.addServerTicker(new PetTicker());
+        TickerInit.addServerTicker(RangedGrabTickerServer.INSTANCE);
+        TickerInit.addServerTicker(new VaultTicker());
+    }
+
+    protected static void networkSetup() {
+        Network.INSTANCE.register(BlockSwapPacket.class, BlockSwapPacket::encode,
+                BlockSwapPacket::decode, BlockSwapPacket::handle);
+        Network.INSTANCE.register(FetchBlockInventoryPacket.class, FetchBlockInventoryPacket::encode,
+                FetchBlockInventoryPacket::decode, FetchBlockInventoryPacket::handle);
+        Network.INSTANCE.register(ChestShulkerOpenPacket.class, ChestShulkerOpenPacket::encode,
+                ChestShulkerOpenPacket::decode, ChestShulkerOpenPacket::handle);
+        Network.INSTANCE.register(GrabItemPacket.class, GrabItemPacket::encode,
+                GrabItemPacket::decode, GrabItemPacket::handle);
+        Network.INSTANCE.register(ConfigSyncPacket.class, ConfigSyncPacket::encode,
+                ConfigSyncPacket::decode, ConfigSyncPacket::handle);
+        Network.INSTANCE.register(SetRepeaterPacket.class, SetRepeaterPacket::encode,
+                SetRepeaterPacket::decode, SetRepeaterPacket::handle);
+        Network.INSTANCE.register(BeaconConfirmPacket.class, BeaconConfirmPacket::encode,
+                BeaconConfirmPacket::decode, BeaconConfirmPacket::handle);
+        Network.INSTANCE.register(ThrowPacket.class, ThrowPacket::encode,
+                ThrowPacket::decode, ThrowPacket::handle);
+        Network.INSTANCE.register(ReelFishPacket.class, ReelFishPacket::encode,
+                ReelFishPacket::decode, ReelFishPacket::handle);
+        Network.INSTANCE.register(BeaconDataPacket.class, BeaconDataPacket::encode,
+                BeaconDataPacket::decode, BeaconDataPacket::handle);
+        Network.INSTANCE.register(DoubleControllerVibrate.class, DoubleControllerVibrate::encode,
+                DoubleControllerVibrate::decode, DoubleControllerVibrate::handle);
+        Network.INSTANCE.register(UsePacket.class, UsePacket::encode,
+                UsePacket::decode, UsePacket::handle);
+        Network.INSTANCE.register(PageTurnPacket.class, PageTurnPacket::encode,
+                PageTurnPacket::decode, PageTurnPacket::handle);
+        Network.INSTANCE.register(SelfHandlingNetworkStorageSyncPacket.class, SelfHandlingNetworkStorageSyncPacket::encode,
+                SelfHandlingNetworkStorageSyncPacket::decode, SelfHandlingNetworkStorageSyncPacket::handle);
+        Network.INSTANCE.register(StartStopTrackPacket.class, StartStopTrackPacket::encode,
+                StartStopTrackPacket::decode, StartStopTrackPacket::handle);
+        Network.INSTANCE.register(FetchAttachmentInventoryPacket.class, FetchAttachmentInventoryPacket::encode,
+                FetchAttachmentInventoryPacket::decode, FetchAttachmentInventoryPacket::handle);
+        Network.INSTANCE.register(AttachmentSwapPacket.class, AttachmentSwapPacket::encode,
+                AttachmentSwapPacket::decode, AttachmentSwapPacket::handle);
+        Network.INSTANCE.register(StopTrackPacketWithOwner.class, StopTrackPacketWithOwner::encode,
+                StopTrackPacketWithOwner::decode, StopTrackPacketWithOwner::handle);
+    }
+}

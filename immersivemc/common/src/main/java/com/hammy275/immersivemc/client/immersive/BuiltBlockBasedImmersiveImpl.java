@@ -1,0 +1,421 @@
+package com.hammy275.immersivemc.client.immersive;
+
+import com.hammy275.immersivemc.api.client.ImmersiveClientLogicHelpers;
+import com.hammy275.immersivemc.api.client.ImmersiveConfigScreenInfo;
+import com.hammy275.immersivemc.api.client.ImmersiveRenderHelpers;
+import com.hammy275.immersivemc.api.client.immersive.BuiltBlockBasedImmersive;
+import com.hammy275.immersivemc.api.client.immersive.BuiltBlockBasedImmersiveInfo;
+import com.hammy275.immersivemc.api.client.immersive.BuiltBlockBasedImmersiveRenderState;
+import com.hammy275.immersivemc.api.client.immersive.HitboxPositioningMode;
+import com.hammy275.immersivemc.api.common.ImmersiveLogicHelpers;
+import com.hammy275.immersivemc.api.common.immersive.BlockBasedImmersiveHandler;
+import com.hammy275.immersivemc.api.common.immersive.NetworkStorage;
+import com.hammy275.immersivemc.client.immersive.info.BuiltBlockBasedImmersiveInfoImpl;
+import com.hammy275.immersivemc.client.immersive.info.render_state.BuiltBlockBasedImmersiveRenderStateImpl;
+import com.hammy275.immersivemc.client.immersive.info.render_state.RelativeHitboxRenderState;
+import com.hammy275.immersivemc.common.immersive.storage.dual.impl.ItemStorage;
+import com.hammy275.immersivemc.common.immersive.storage.network.impl.ListOfItemsStorage;
+import com.hammy275.immersivemc.common.util.Util;
+import com.mojang.blaze3d.vertex.PoseStack;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.Vec3i;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.DirectionalBlock;
+import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.AttachFace;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
+import org.jetbrains.annotations.Nullable;
+
+import java.lang.reflect.InvocationTargetException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+
+public final class BuiltBlockBasedImmersiveImpl<E, ER, S extends NetworkStorage> implements BuiltBlockBasedImmersive<E, ER, S> {
+
+    private final BlockBasedImmersiveBuilderImpl<E, ER, S> builder;
+    private final List<BuiltBlockBasedImmersiveInfo<E>> infos = new ArrayList<>();
+
+    public BuiltBlockBasedImmersiveImpl(BlockBasedImmersiveBuilderImpl<E, ER, S> builder) {
+        this.builder = builder;
+    }
+
+    @Override
+    public BlockBasedImmersiveHandler<S> getHandler() {
+        return builder.handler;
+    }
+
+    @Override
+    public @Nullable ImmersiveConfigScreenInfo configScreenInfo() {
+        return builder.configScreenInfo;
+    }
+
+    @Override
+    public void tick(BuiltBlockBasedImmersiveInfo<E> infoIn) {
+        BuiltBlockBasedImmersiveInfoImpl<E> info = asImpl(infoIn);
+        info.ticksExisted++;
+        Direction currentDir;
+        switch (builder.positioningMode) {
+            case HORIZONTAL_BLOCK_FACING, BLOCK_FACING_NEG_X, HORIZONTAL_BLOCK_FACING_ATTACHED_FLOOR_CEILING_REVERSED, TOP_BLOCK_FACING ->
+                    currentDir = info.immersiveDir;
+            case TOP_PLAYER_FACING, HORIZONTAL_PLAYER_FACING, PLAYER_FACING_NO_DOWN ->
+                    currentDir = ImmersiveLogicHelpers.instance().getHorizontalBlockForward(Minecraft.getInstance().player, info.getBlockPosition());
+            case TOP_LITERAL ->
+                    currentDir = null;
+            case PLAYER_FACING_FILTER_BLOCK_FACING ->
+                    currentDir = Util.getForwardFromPlayerUpAndDownFilterBlockFacing(Minecraft.getInstance().player, info.getBlockPosition(), true);
+            default ->
+                    throw new UnsupportedOperationException("Facing direction for positioning mode " + builder.positioningMode + " unimplemented!");
+
+        }
+
+        boolean differentDirs = info.immersiveDir != currentDir;
+        info.immersiveDir = currentDir;
+
+        boolean didRecalc = false;
+        for (int i = 0; i < info.hitboxes.size(); i++) {
+            RelativeHitboxInfoImpl hitbox = info.hitboxes.get(i);
+            // Update hitbox if its offset isn't constant, the current direction isn't the same as the last,
+            // if it hasn't been calculated yet, if slots can change whether they're active, or if they need
+            // to detect VR hand movements.
+            if (!hitbox.constantOffset || differentDirs || !hitbox.calcDone() || builder.slotActive != null
+                || hitbox.vrMovementInfo != null || hitbox.textSupplier != null || !hitbox.forcedUpDownRenderDirConstant) {
+                didRecalc = true;
+                if (builder.slotActive == null || builder.slotActive.apply(info, i)) {
+                    hitbox.recalculate(Minecraft.getInstance().level, builder.positioningMode, info);
+                } else {
+                    // Force hitbox to be null if not active. Prevents rendering and hitbox collision, but still keeps
+                    // the slot available to receive items from the network, etc.
+                    hitbox.forceNull();
+                }
+            }
+            if (differentDirs) {
+                hitbox.onOrientationChange();
+            }
+        }
+
+        if (builder.dragHitboxCreator != null) {
+            info.dragHitbox = builder.dragHitboxCreator.apply(info);
+        } else if (didRecalc) {
+            boolean validBox = false;
+            double minX = Double.POSITIVE_INFINITY;
+            double minY = Double.POSITIVE_INFINITY;
+            double minZ = Double.POSITIVE_INFINITY;
+            double maxX = Double.NEGATIVE_INFINITY;
+            double maxY = Double.NEGATIVE_INFINITY;
+            double maxZ = Double.NEGATIVE_INFINITY;
+            for (RelativeHitboxInfoImpl hitbox : info.hitboxes) {
+                if (hitbox.hasAABB() && hitbox.isInput) {
+                    AABB aabb = hitbox.getAABB();
+                    minX = Math.min(minX, aabb.minX);
+                    minY = Math.min(minY, aabb.minY);
+                    minZ = Math.min(minZ, aabb.minZ);
+                    maxX = Math.max(maxX, aabb.maxX);
+                    maxY = Math.max(maxY, aabb.maxY);
+                    maxZ = Math.max(maxZ, aabb.maxZ);
+                    validBox = true;
+                }
+            }
+            if (validBox) {
+                info.dragHitbox = new AABB(minX, minY, minZ, maxX, maxY, maxZ).inflate(0.0625);
+            } else {
+                info.dragHitbox = null;
+            }
+        }
+
+        info.airCheckPassed = airCheck(info);
+        info.light = ImmersiveClientLogicHelpers.instance().getLight(getLightPositions(info));
+    }
+
+    @Override
+    @Nullable
+    public AABB getDragHitbox(BuiltBlockBasedImmersiveInfo<E> info) {
+        return asImpl(info).dragHitbox;
+    }
+
+    @Override
+    public boolean isInputHitbox(BuiltBlockBasedImmersiveInfo<E> infoIn, int hitboxIndex) {
+        BuiltBlockBasedImmersiveInfoImpl<E> info = asImpl(infoIn);
+        return info.hitboxes.get(hitboxIndex).isInput;
+    }
+
+    @Override
+    public boolean shouldRender(BuiltBlockBasedImmersiveRenderState<ER> renderStateIn) {
+        BuiltBlockBasedImmersiveRenderStateImpl<ER> renderState = asImpl(renderStateIn);
+        return renderState.hasHitboxes() && renderState.airCheckPassed;
+    }
+
+    @Override
+    public void render(BuiltBlockBasedImmersiveRenderState<ER> renderStateIn, PoseStack stack, ImmersiveRenderHelpers helpers, float partialTick) {
+        BuiltBlockBasedImmersiveRenderStateImpl<ER> renderState = asImpl(renderStateIn);
+        float size = ImmersiveRenderHelpers.instance().getTransitionMultiplier(renderState.ticksExisted) * builder.renderSize;
+        for (int i = 0; i < renderState.hitboxes.size(); i++) {
+            RelativeHitboxRenderState hitbox = renderState.hitboxes.get(i);
+            // Built Immersives can give null hitboxes to skip rendering them. Need to make sure it's nonnull before
+            // trying to render it.
+            if (hitbox.aabb != null) {
+                Vec3 renderPos = hitbox.aabb.getCenter();
+                if (hitbox.holdsItems && (hitbox.renderItem || hitbox.item == null || hitbox.item.isEmpty())) {
+                    Float spinDegrees = hitbox.itemSpins ? renderState.ticksExisted % 100f * 3.6f : null;
+                    if (hitbox.item == null || hitbox.item.isEmpty()) {
+                        if (hitbox.isInput && builder.slotRendersItemGuide.apply(renderStateIn, i)) {
+                            helpers.renderItemGuide(stack, hitbox.aabb, renderState.isSlotHovered(i), renderState.light);
+                        }
+                    } else {
+                        float renderSize = size * hitbox.itemRenderSizeMultiplier;
+                        if (renderState.isSlotHovered(i)) {
+                            renderSize *= ImmersiveRenderHelpers.instance().hoverScaleSizeMultiplier();
+                        }
+                        Direction itemDir = renderState.immersiveDir;
+                        if (hitbox.itemRotationType != null) {
+                            itemDir = hitbox.itemRotationType.transform(itemDir);
+                        }
+                        helpers.renderItem(hitbox.item, stack, renderSize,
+                                hitbox.aabb, hitbox.renderItemCount, renderState.light, spinDegrees,
+                                itemDir, hitbox.upDownRenderDir);
+                    }
+                } else {
+                    helpers.renderHitbox(stack, hitbox.aabb);
+                }
+                for (TextData data : hitbox.textData) {
+                    helpers.renderText(data.text(), stack, renderPos.add(data.offset()), renderState.light, 0.02f);
+                }
+            }
+
+        }
+        if (renderState.dragHitbox != null) {
+            helpers.renderHitbox(stack, renderState.dragHitbox, false, 0, 1, 1);
+        }
+        builder.extraRenderer.render(renderStateIn, stack, helpers, partialTick, renderState.light);
+    }
+
+    @Override
+    public BuiltBlockBasedImmersiveInfo<E> buildInfo(BlockPos pos, Level level) {
+        BlockState state = level.getBlockState(pos);
+        BuiltBlockBasedImmersiveInfoImpl<E> info;
+        if (builder.positioningMode == HitboxPositioningMode.HORIZONTAL_BLOCK_FACING) {
+            info = new BuiltBlockBasedImmersiveInfoImpl<>(builder.hitboxes, pos, builder.extraInfoDataClazz);
+            info.immersiveDir = state.getValue(HorizontalDirectionalBlock.FACING);
+        } else if (builder.positioningMode == HitboxPositioningMode.TOP_PLAYER_FACING) {
+          info = new BuiltBlockBasedImmersiveInfoImpl<>(builder.hitboxes, pos, builder.extraInfoDataClazz);
+        } else if (builder.positioningMode == HitboxPositioningMode.TOP_LITERAL) {
+          info = new BuiltBlockBasedImmersiveInfoImpl<>(builder.hitboxes, pos, builder.extraInfoDataClazz);
+        } else if (builder.positioningMode == HitboxPositioningMode.TOP_BLOCK_FACING) {
+            info = new BuiltBlockBasedImmersiveInfoImpl<>(builder.hitboxes, pos,
+                    builder.extraInfoDataClazz);
+            info.immersiveDir = state.getValue(HorizontalDirectionalBlock.FACING);
+        } else if (builder.positioningMode == HitboxPositioningMode.HORIZONTAL_PLAYER_FACING) {
+            info = new BuiltBlockBasedImmersiveInfoImpl<>(builder.hitboxes, pos, builder.extraInfoDataClazz);
+        } else if (builder.positioningMode == HitboxPositioningMode.BLOCK_FACING_NEG_X) {
+            info = new BuiltBlockBasedImmersiveInfoImpl<>(builder.hitboxes, pos,
+                    builder.extraInfoDataClazz);
+            info.immersiveDir = state.getValue(BlockStateProperties.FACING);
+        } else if (builder.positioningMode == HitboxPositioningMode.PLAYER_FACING_NO_DOWN) {
+            info = new BuiltBlockBasedImmersiveInfoImpl<>(builder.hitboxes, pos, builder.extraInfoDataClazz);
+        } else if (builder.positioningMode == HitboxPositioningMode.PLAYER_FACING_FILTER_BLOCK_FACING) {
+            info = new BuiltBlockBasedImmersiveInfoImpl<>(builder.hitboxes, pos, builder.extraInfoDataClazz);
+        } else if (builder.positioningMode == HitboxPositioningMode.HORIZONTAL_BLOCK_FACING_ATTACHED_FLOOR_CEILING_REVERSED) {
+            info = new BuiltBlockBasedImmersiveInfoImpl<>(builder.hitboxes, pos, builder.extraInfoDataClazz);
+            info.immersiveDir = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
+            if (state.getValue(BlockStateProperties.ATTACH_FACE) != AttachFace.WALL) {
+                info.immersiveDir = info.immersiveDir.getOpposite();
+            }
+        } else {
+            throw new UnsupportedOperationException("Tracking for positioning mode " + builder.positioningMode + " unimplemented!");
+        }
+        return info;
+    }
+
+    @Override
+    public boolean shouldDisableRightClicksWhenVanillaInteractionsDisabled(BuiltBlockBasedImmersiveInfo<E> info) {
+        return builder.blockRightClickWhenGUIClickDisabled;
+    }
+
+
+    @Override
+    public Collection<BuiltBlockBasedImmersiveInfo<E>> getTrackedObjects() {
+        return this.infos;
+    }
+
+    @Override
+    public int handleHitboxInteract(BuiltBlockBasedImmersiveInfo<E> infoIn, LocalPlayer player, List<Integer> hitboxIndices, InteractionHand hand, boolean modifierPressed) {
+        BuiltBlockBasedImmersiveInfoImpl<E> info = asImpl(infoIn);
+        return builder.hitboxInteractHandler.apply(info, player, hitboxIndices, hand, modifierPressed);
+    }
+
+    private boolean airCheck(BuiltBlockBasedImmersiveInfo<E> infoIn) {
+        BuiltBlockBasedImmersiveInfoImpl<E> info = asImpl(infoIn);
+        Collection<BlockPos> positions;
+        if (builder.airCheckPositionOffsets.isEmpty()) {
+            positions = new HashSet<>();
+            info.hitboxes.forEach((hitbox) -> {
+                if (hitbox.hasAABB()) {
+                    positions.addAll(Util.allPositionsWithAABB(hitbox.getAABB()));
+                }
+            });
+            BlockPos immersivePos = info.getBlockPosition();
+            positions.remove(immersivePos);
+            // Remove checking for air all positions >1 block out on any individual axis. This is done so things
+            // like the Enchanting Table Immersive's animations, which barely clip into the next block on the Y-axis,
+            // aren't checked for the air check.
+            positions.removeIf((pos) -> (Math.abs(pos.getX() - immersivePos.getX()) > 1 ||
+                    Math.abs(pos.getY() - immersivePos.getY()) > 1 ||
+                    Math.abs(pos.getZ() - immersivePos.getZ()) > 1));
+        } else {
+            positions = new ArrayList<>();
+            for (Vec3i offset : builder.airCheckPositionOffsets) {
+                positions.add(info.getBlockPosition().offset(offset));
+            }
+        }
+        for (BlockPos pos : positions) {
+            BlockState state = Minecraft.getInstance().level.getBlockState(pos);
+            if (state.canBeReplaced()) {
+                continue; // Replaceable blocks never block immersives.
+            }
+            VoxelShape voxelShape = state.getShape(Minecraft.getInstance().level, pos);
+            if (voxelShape.isEmpty()) { // Can happen, surprisingly!
+                continue;
+            }
+            AABB shape = voxelShape.bounds();
+            double volume = shape.getXsize() * shape.getYsize() * shape.getZsize();
+            if (volume > 1d/3d) {
+                return false; // Blocks with bounding boxes larger than 1/3 of a block cause blocking.
+            }
+        }
+        return true;
+    }
+
+    public List<BlockPos> getLightPositions(BuiltBlockBasedImmersiveInfo<E> info) {
+        if (builder.lightPositionOffsets.size() > 1) {
+            List<BlockPos> lightPositions = new ArrayList<>();
+            for (Vec3i offset : builder.lightPositionOffsets) {
+                lightPositions.add(info.getBlockPosition().offset(offset));
+            }
+            return lightPositions;
+        } else if (builder.positioningMode == HitboxPositioningMode.PLAYER_FACING_FILTER_BLOCK_FACING) {
+            List<BlockPos> lightPositions = new ArrayList<>();
+            Direction.Axis ignored = Minecraft.getInstance().player.level().getBlockState(info.getBlockPosition()).getValue(DirectionalBlock.FACING).getAxis();
+            for (Direction dir : Direction.values()) {
+                if (dir.getAxis() != ignored) {
+                    lightPositions.add(info.getBlockPosition().relative(dir));
+                }
+            }
+            return lightPositions;
+        } else {
+            return List.of(getLightPos(info));
+        }
+    }
+
+    public BlockPos getLightPos(BuiltBlockBasedImmersiveInfo<E> infoIn) {
+        BuiltBlockBasedImmersiveInfoImpl<E> info = asImpl(infoIn);
+        if (builder.lightPositionOffsets.isEmpty()) {
+            if (builder.positioningMode == HitboxPositioningMode.HORIZONTAL_BLOCK_FACING) {
+                return info.getBlockPosition().relative(info.immersiveDir);
+            } else if (builder.positioningMode == HitboxPositioningMode.TOP_PLAYER_FACING) {
+                return info.getBlockPosition().above();
+            } else if (builder.positioningMode == HitboxPositioningMode.TOP_LITERAL) {
+                return info.getBlockPosition().above();
+            } else if (builder.positioningMode == HitboxPositioningMode.TOP_BLOCK_FACING) {
+                return info.getBlockPosition().above();
+            } else if (builder.positioningMode == HitboxPositioningMode.HORIZONTAL_PLAYER_FACING) {
+                return info.getBlockPosition().relative(ImmersiveLogicHelpers.instance().getHorizontalBlockForward(Minecraft.getInstance().player, info.getBlockPosition()));
+            } else if (builder.positioningMode == HitboxPositioningMode.BLOCK_FACING_NEG_X) {
+                return info.getBlockPosition().relative(info.immersiveDir);
+            } else if (builder.positioningMode == HitboxPositioningMode.PLAYER_FACING_NO_DOWN) {
+                return info.getBlockPosition().relative(Util.getForwardFromPlayerUpAndDown(Minecraft.getInstance().player, info.getBlockPosition()));
+            } else if (builder.positioningMode == HitboxPositioningMode.HORIZONTAL_BLOCK_FACING_ATTACHED_FLOOR_CEILING_REVERSED) {
+                BlockState state = Minecraft.getInstance().level.getBlockState(info.getBlockPosition());
+                return switch (state.getValue(BlockStateProperties.ATTACH_FACE)) {
+                    case FLOOR -> info.getBlockPosition().above();
+                    case WALL -> info.getBlockPosition().relative(state.getValue(BlockStateProperties.HORIZONTAL_FACING));
+                    case CEILING -> info.getBlockPosition().below();
+                };
+            } else {
+                throw new UnsupportedOperationException("Light pos for positioning mode " + builder.positioningMode + " unimplemented!");
+            }
+        } else {
+            return info.getBlockPosition().offset(builder.lightPositionOffsets.get(0));
+        }
+    }
+
+    @Override
+    public void processStorageFromNetwork(BuiltBlockBasedImmersiveInfo<E> infoIn, S storage) {
+        BuiltBlockBasedImmersiveInfoImpl<E> info = asImpl(infoIn);
+        if (storage instanceof ListOfItemsStorage itemsStorage) {
+            for (int i = 0; i < itemsStorage.getItems().size(); i++) {
+                info.hitboxes.get(i).item = itemsStorage.getItems().get(i);
+            }
+        } else if (storage instanceof ItemStorage iws) {
+            for (int i = 0; i < iws.getNumItems(); i++) {
+                info.hitboxes.get(i).item = iws.getItem(i);
+            }
+        }
+        if (builder.extraStorageConsumer != null) {
+            builder.extraStorageConsumer.accept(storage, (BuiltBlockBasedImmersiveInfoImpl) info);
+        }
+    }
+
+    @Override
+    public boolean isVROnly() {
+        return builder.vrOnly;
+    }
+
+    @Override
+    public BuiltBlockBasedImmersiveRenderState<ER> createRenderState() {
+        BuiltBlockBasedImmersiveRenderStateImpl<ER> renderState = new BuiltBlockBasedImmersiveRenderStateImpl<ER>();
+        if (builder.extraInfoDataRenderStateClazz != null) {
+            try {
+                renderState.extraData = builder.extraInfoDataRenderStateClazz.getDeclaredConstructor().newInstance();
+            } catch (NoSuchMethodException | InstantiationException | IllegalAccessException | InvocationTargetException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        renderState.hitboxes = new ArrayList<>(builder.hitboxes.size());
+        for (int i = 0; i < builder.hitboxes.size(); i++) {
+            renderState.hitboxes.add(new RelativeHitboxRenderState());
+        }
+        return renderState;
+    }
+
+    @Override
+    public void extractRenderState(BuiltBlockBasedImmersiveInfo<E> infoIn, BuiltBlockBasedImmersiveRenderState<ER> renderStateIn, float partialTicks) {
+        BuiltBlockBasedImmersiveInfoImpl<E> info = asImpl(infoIn);
+        BuiltBlockBasedImmersiveRenderStateImpl<ER> renderState = asImpl(renderStateIn);
+        for (int i = 0; i < info.hitboxes.size(); i++) {
+            info.hitboxes.get(i).extractRenderState(renderState.hitboxes.get(i), partialTicks);
+        }
+        renderState.pos = info.getBlockPosition();
+        renderState.ticksExisted = info.ticksExisted;
+        renderState.airCheckPassed = info.airCheckPassed;
+        renderState.light = info.light;
+        renderState.immersiveDir = info.immersiveDir;
+        renderState.dragHitbox = info.dragHitbox;
+        if (builder.extraInfoDataRenderStateExtractor != null) {
+            builder.extraInfoDataRenderStateExtractor.accept(info, renderState.extraData);
+        }
+        renderState.slotsHovered = info.slotsHovered.clone();
+    }
+
+    public <T extends NetworkStorage> BlockBasedImmersiveBuilderImpl<E, ER, T> getBuilderClone(BlockBasedImmersiveHandler<T> newHandler) {
+        return builder.copy(newHandler);
+    }
+
+    @SuppressWarnings("unchecked")
+    private BuiltBlockBasedImmersiveInfoImpl<E> asImpl(BuiltBlockBasedImmersiveInfo<E> infoIn) {
+        return (BuiltBlockBasedImmersiveInfoImpl<E>) infoIn;
+    }
+
+    @SuppressWarnings("unchecked")
+    private BuiltBlockBasedImmersiveRenderStateImpl<ER> asImpl(BuiltBlockBasedImmersiveRenderState<ER> renderStateIn) {
+        return (BuiltBlockBasedImmersiveRenderStateImpl<ER>) renderStateIn;
+    }
+}
