@@ -25,6 +25,11 @@ public class XloaderImpl implements Xloader {
         return "no version";
     }
 
+    public static String getModVersionById(String modId) {
+        var file = LoadingModList.get().getModFileById(modId);
+        return file == null ? null : file.versionString();
+    }
+
     public static Path getConfigPath(String fileName) {
         return FMLPaths.CONFIGDIR.get().resolve(fileName);
     }
