@@ -2,7 +2,8 @@
 
 Personal-use fork of the QuestCraft stack (Minecraft: Java Edition running natively on a Meta Quest 3S).
 It has two parts:
-- the **QuestCraftPlusPlus/VivecraftMod** fork (LGPLv3), which is the VR mod;
+- the VR mod: upstream **Vivecraft 1.3.15** for 1.21.5 merged with the OpenXR/Android provider from the
+  **QuestCraftPlusPlus/VivecraftMod** fork (LGPLv3);
 - patches to QuestCraft's launcher core (**Pojlib**), shipped as a patched QuestCraft APK.
 
 Goal: stop the crashes and make it smooth on the headset.
@@ -38,7 +39,8 @@ is standing context and rules.
 
 - **Minecraft and mods:** Minecraft 1.21.5 on Fabric. The mod list comes from Pojlib's `mods.json` on
   branch `QuestCraft-6.0.0`, fetched live at every launch:
-  - Vivecraft **1.2.5** (release `1.21.5-1.2.5-OpenXR`)
+  - Vivecraft **1.2.5** (release `1.21.5-1.2.5-OpenXR`) in the official app. **Our build ships Vivecraft
+    1.3.15** (see `vivecraft/` below) and installs it over the downloaded one.
   - Sodium **0.6.13**, Lithium 0.16.3, FerriteCore 8.0.0, ImmediatelyFast 1.9.7, MoreCulling 1.3.1,
     EntityCulling 1.9.5, BadOptimizations 2.4.1, Krypton 0.2.9, Simple Voice Chat 2.6.11, bbrb 1.5.2,
     Fabric API 0.128.2, Cloth Config
@@ -63,7 +65,8 @@ is standing context and rules.
 
 | Path | What |
 |---|---|
-| `vivecraft/` | QuestCraftPlusPlus/VivecraftMod @ `6d9b96af`, which the release `1.21.5-1.2.5-OpenXR` was most likely built from (CI compares it with the release jar). Imported as a git subtree (`--squash`); our changes are normal commits. |
+| `vivecraft/` | Vivecraft 1.21.5-1.3.15 with QuestCraft's OpenXR provider: QuestCraftPlusPlus/VivecraftMod `OpenXR-1.21.5` @ `612a11ca` (upstream 1.3.4 + OpenXR, unreleased) merged with upstream Vivecraft/VivecraftMod `1.21.5-1.3.15` @ `86da32bd`. The merge is local commit `463d0f64` (its message lists the conflict resolution), squash-merged as a git subtree; our changes are normal commits. The 1.2.5 line (base `6d9b96af`, the `1.21.5-1.2.5-OpenXR` release) is kept on branches `archive/vivecraft-1.2.5` (integration) and `archive/vivecraft-1.2.5-main`. CI still compares the jar with the 1.2.5 release jar, for information only. |
+| `immersivemc/` | ImmersiveMC (hammy275/immersive-mc) @ `8713ae83`, branch `1.21.5`, vendored without the demo GIFs. **Parked:** not built or bundled yet (see `immersivemc/IMPORTED.md`). |
 | `pojlib/` | QuestCraftPlusPlus/Pojlib @ `c6566d5` (`QuestCraft-6.0.0`), vendored without binaries. The 6.0.0 APK was built from an older commit (≈`092c27e`, 2025-05-30); the one later change to a class we replace is reverted (see `pojlib/IMPORTED.md`). Not built as a whole. |
 | `apk/` | APK pipeline: `build-apk.sh`, `patched-sources.txt` (the launcher classes we change), `rename_package.py`, `compare_jars.py`, and the debug signing key |
 | `.github/workflows/build.yml` | CI. Builds the jar and the APKs; a `mihail.N` tag publishes a GitHub release |
@@ -75,7 +78,7 @@ is standing context and rules.
 | Area | File |
 |---|---|
 | Per-frame pass loop; each eye calls the full `gameRenderer.render` | `client_vr/render/helpers/VRPassHelper.java` |
-| Frame loop order (`vr.poll` / `xrWaitFrame` before the game tick at this base) | `mixin/client_vr/MinecraftVRMixin.java` |
+| Frame loop order: `vr.poll` / `xrWaitFrame` at "render" after the game ticks (QuestCraft `c4f3315`, in the base), or before them like upstream with `xrLateFrameWait` off | `mixin/client_vr/MinecraftVRMixin.java` |
 | Which passes run; all framebuffer allocation | `client_vr/provider/VRRenderer.java` (`getRenderPasses`, `setupRenderConfiguration`) |
 | Entity-outline target, one per render pass | `client_vr/MultiPassTextureTarget.java`, `mixin/client_vr/renderer/LevelRendererVRMixin.java` |
 | OpenXR session, input, refresh rate (`initDisplayRefreshRate` picks the **max**) | `client_vr/provider/openxr/MCOpenXR.java` |
@@ -84,9 +87,10 @@ is standing context and rules.
 | VR start after the first resource load | `mixin/client/ResourceLoadStateTrackerMixin.java`, `client_vr/VRState.java` |
 | Forces a Sodium chunk-graph rebuild **every pass** (the eyes differ anyway; see FINDINGS V11) | `mod_compat_vr/sodium/mixin/SodiumWorldRendererVRMixin.java` |
 | Second-eye dedup today (lighting only) via `isFirstPass` | `mixin/client_vr/renderer/LevelRendererVRMixin.java` |
-| Title-screen 3D world: never freed on join; decoded with two full copies | `client_vr/menuworlds/MenuWorldRenderer.java`, `MenuWorldExporter.java` |
+| Title-screen 3D world: never freed on join upstream; decoded into one buffer, in parallel (1.3.x) | `client_vr/menuworlds/MenuWorldRenderer.java`, `MenuWorldExporter.java` |
 | Supporter list download; keeps `Player` objects if it fails | `client/network/SupporterReceiver.java` |
-| All user settings and the settings GUI | `client_vr/settings/VRSettings.java`, `client_vr/gui/settings/` |
+| All user settings and the settings GUI | `client_vr/settings/VRSettings.java`, `client/gui/settings/` (screens in `client/gui/framework/`) |
+| Eye targets: `getLeftEyeTarget()`/`getRightEyeTarget()`/`getEyeTarget(i)`; OpenXR returns the acquired swapchain image, the others `framebufferEye[i]` | `client_vr/provider/VRRenderer.java` |
 | Desktop provider with no headset (CPU profiling on the Mac) | `client_vr/provider/nullvr/` |
 
 ## Code map: launcher (under `pojlib/src/main/java/pojlib/`)
@@ -112,9 +116,10 @@ The Unity C# (QCXR-XR-Wrapper) is compiled to native code inside the APK, so we 
 2. **Log the config.** On VR init, log one line prefixed `[VCPERF]` with the build tag and every perf
    toggle's value. The launcher logs its effective JVM arguments and properties into `latestlog.txt`. Any
    log must identify what was tested.
-3. **Build tag:** set `mod_version` in `vivecraft/gradle.properties` to `1.2.5-mihail.N` and bump N for
-   every build deployed to the headset. `mihail.0` is the unmodified release code. Tag the commit
-   `mihail.N` to publish the jar and APKs as a GitHub release.
+3. **Build tag:** set `mod_version` in `vivecraft/gradle.properties` to `1.3.15-mihail.N` and bump N for
+   every build deployed to the headset. `1.3.15-mihail.0` is the merged base without our changes (the
+   1.2.5 builds were `1.2.5-mihail.N`). Tag the commit `mihail.N` to publish the jar and APKs as a GitHub
+   release (this session's git proxy refuses tag pushes; push the tag from the Mac).
 4. **Minimal, rebase-friendly diffs.** Prefer Mixins and small hooks over rewrites. Do not reformat files.
    Keep upstream rebases cheap.
 5. **No new dependencies.**

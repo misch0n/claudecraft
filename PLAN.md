@@ -31,6 +31,18 @@ while Minecraft runs.
 
 ---
 
+## Vivecraft 1.3.15 base (2026-10-15)
+
+The fork moved from QuestCraft's Vivecraft 1.2.5 to upstream Vivecraft 1.21.5-1.3.15 merged with
+QuestCraft's OpenXR provider (CLAUDE.md, Repo layout). The Phase 1 and 2 toggles were ported onto it in
+`integration/mihail.2`; the 1.2.5 work stays on `archive/vivecraft-1.2.5`. Before trusting any Phase 1/2
+result on the new base, run the headset smoke test (`1.3.15-mihail.0`, then `mihail.2`): VR starts,
+controllers work, a world loads, no crash in 10 minutes.
+
+Next, separate task: bake ImmersiveMC (`immersivemc/`, parked) into the build, behind its own toggle.
+
+---
+
 ## Phase 1 — Stability and memory (first sideload build, `mihail.1`)
 
 All of these ship in one build, each behind its own toggle.
@@ -41,7 +53,7 @@ All of these ship in one build, each behind its own toggle.
 |---|---|---|---|
 | 1a `[VCPERF]` config line + periodic memory lines (heap, metaspace, code cache, direct, RSS; JVM args) | `perfMemoryLog` | on | M5, M7 |
 | 1b Free the menu world when a world is joined, rebuild on the title screen; no menu-world loading/building while a world exists | `freeMenuWorldInGame` | on | V1 |
-| 1c Stream-decode the menu world file (no two full copies) | `menuWorldStreamLoad` | on | V1 |
+| ~~1c Stream-decode the menu world file~~ dropped on Vivecraft 1.3.x: upstream now inflates into one buffer and decodes in parallel | — | — | V1 |
 | 1d Entity-outline targets shared by both eyes and created on first use | `shareOutlineTargets` | on | V2 |
 | 1e Lazy auxiliary targets (camera, telescopes, keyboard), 1×1 mirror when the mirror is off | `lazyAuxBuffers` | on | V3 |
 | 1f Supporter download: never keep `Player` objects; time out; fail cleanly | `fixSupporterLeak` | on | V4 |
@@ -75,7 +87,7 @@ caused a problem.
 
 | Task | Toggle | Default | Finding |
 |---|---|---|---|
-| 2a Frame timing: `xrWaitFrame` after the game tick, submit right after the right eye (backport of upstream `c4f3315`) | `xrLateFrameWait` | on | V6 |
+| 2a Frame timing: `xrWaitFrame` after the game tick, submit right after the right eye (QuestCraft `c4f3315`, already in the 1.3.15 base; off restores upstream's order) | `xrLateFrameWait` | on | V6 |
 | 2b Refresh rate setting: MAX, 72, 90, 120. Request only if enumerated, apply live, log the actual rate | `xrRefreshRate` | 90 | V7 |
 | 2c Cache OpenXR bound sources per action; refresh on interaction-profile change | `cacheInputOrigins` | on | V8 |
 | 2d `glGetError` checks only when debugging | `glErrorChecks` | off | V9, L4 |
