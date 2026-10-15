@@ -1,5 +1,6 @@
 package com.hammy275.immersivemc.common.vr.dev.impl;
 
+import com.hammy275.immersivemc.common.vr.dev.DevVRState;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import org.vivecraft.api.data.VRBodyPart;
@@ -12,7 +13,12 @@ public class DevVRServerAPI implements VRServerAPI {
         serverPlayer.sendSystemMessage(Component.literal("Server haptic pulse for %s and body part %s".formatted(serverPlayer.getGameProfile().getName(), vrBodyPart)));
     }
 
-    // claudecraft: Vivecraft 1.3.13+ API; the dev stub knows no version
+    // claudecraft: Vivecraft 1.3.13+ API; same answer as DevVRAPI.isVRPlayer, and no known version
+    @Override
+    public boolean hasVivecraft(ServerPlayer serverPlayer) {
+        return DevVRState.inVR;
+    }
+
     @Override
     public ViveVersion getVivecraftVersion(ServerPlayer serverPlayer) {
         return null;
