@@ -46,7 +46,14 @@ jobs:
           add-job-summary: never
       - name: Build Fabric jar
         working-directory: vivecraft
-        run: bash ./gradlew :fabric:build --no-daemon --stacktrace
+        run: |
+          # compiler errors go last, so they are in the tail of the job log
+          set -o pipefail
+          bash ./gradlew :fabric:build --no-daemon 2>&1 | tee ../build.log || {
+            echo "=== BUILD ERRORS ==="
+            grep -E '\.java:[0-9]+: error:|^e: |What went wrong' -A3 ../build.log | grep -v -E '^\s+at ' | head -200
+            exit 1
+          }
       - name: Locate jar
         id: meta
         run: |
@@ -178,6 +185,7 @@ jobs:
           if ls fabric/run/crash-reports/*.txt >/dev/null 2>&1; then echo "::error::crash report written"; head -60 fabric/run/crash-reports/*.txt; fail=1; fi
           if grep -n -E 'Mixin apply .*failed|MixinApplyError|InvalidInjectionException|Mixin transformation of .* failed' "$log" client.log; then echo "::error::mixin failure"; fail=1; fi
           if grep -n 'Failed to initialize VR' "$log"; then echo "::error::VR init failed"; fail=1; fi
+          if grep -q 'BUILD FAILED' client.log; then echo "::error::build failed"; grep -E '\.java:[0-9]+: error:' -A2 client.log | head -60; fail=1; fi
           if grep -rq 'class PerfProbe' common/src; then
             grep -q '\[VCPERF\] config' "$log" || { echo "::error::no [VCPERF] config line (VR did not start?)"; fail=1; }
             grep -q 'label=join+60s' "$log" || { echo "::error::did not stay in the world for 60 s"; fail=1; }
