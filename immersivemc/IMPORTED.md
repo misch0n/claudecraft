@@ -14,14 +14,15 @@ the patched launcher installs it as `<gameDir>/mods/ImmersiveMC-claudecraft.jar`
 
 Our changes (normal commits on top of the import):
 - `settings.gradle`: includes only the platforms listed in `enabled_platforms`.
-- `gradle.properties`: `enabled_platforms=fabric`; `mod_version=1.6.0-beta1+claudecraft.2` (bump the
+- `gradle.properties`: `enabled_platforms=fabric`; `mod_version=1.6.0-beta1+claudecraft.3` (bump the
   suffix when we change the code); `loom.ignoreDependencyLoomVersionValidation=true` (our Vivecraft jar
   is built with a newer Loom, as `vivecraft/gradle.properties` already allows).
 - `common/build.gradle`, `fabric/build.gradle`: with `-Pvivecraft_jar=<jar>`, Vivecraft is a file mod
   dependency (`modApi files(...)`) instead of `curse.maven:vivecraft-667903`. Without it the build
   is upstream's.
-- `DevVRServerAPI` (dev-only stub) implements `getVivecraftVersion`, which Vivecraft's `VRServerAPI` gained
-  in 1.3.13; upstream compiles against an older Vivecraft.
+- `DevVRServerAPI` (dev-only stub) implements `hasVivecraft` and `getVivecraftVersion`, which Vivecraft's
+  `VRServerAPI` gained in 1.3.13; upstream compiles against an older Vivecraft. The other dev stubs
+  already match the 1.3.15 API interfaces.
 
 Build: `cd immersivemc && ./gradlew :fabric:build -Pvivecraft_jar=<path to our Vivecraft fabric jar>`
 (JDK 21) → `fabric/build/libs/immersivemc-<mod_version>.jar`.
