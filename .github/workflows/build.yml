@@ -273,6 +273,8 @@ jobs:
           echo "VR init: $(grep -c -E 'Vivecraft: (Garbage collector|OpenXR|NullVR)|\[VCPERF\] config' "$log") | world joined: $(grep -c -E 'joined the game|Loaded [0-9]+ advancements|label=join ' "$log") | VCPERF lines: $(grep -c '\[VCPERF\]' "$log") | errors: $(grep -c -E 'ERROR\]' "$log")"
           grep -E '\[VCPERF\] (config|mem label=(vr_init|join|join\+60s|leave))' "$log" | cut -c1-330 | head -8 || true
           grep -n -E 'ERROR\]|Exception' "$log" | grep -v -i -E 'sound|openal|realms|telemetry|narrator' | cut -c1-250 | head -15 || true
+          # ImmersiveMC registers its Vivecraft interact modules once; show where a duplicate comes from
+          grep -n -B3 -A14 'is already added and should not be added again' "$log" | cut -c1-220 | head -40 || true
           [ -f fabric/run/logs/latest.log ] || { echo "no game log; end of client.log:"; tail -25 client.log | cut -c1-300; }
           echo "=== END SUMMARY (fail=$fail) ==="
           exit $fail
