@@ -45,7 +45,7 @@ our problem: crashes at about 6.3 GB, then CPU frame time.
 
 | # | Idea | Visor evidence | Our target | Expected benefit | Risk | Relation to PLAN |
 |---|---|---|---|---|---|---|
-| X1 | **Don't give the swapchain wrapper targets depth.** Ours create each wrapper with `useDepth=true` (`VC:client_vr/provider/openxr/OpenXRStereoRenderer.java:61,64`); Visor wraps the images with no depth (`V:…/openxr/XrRenderTarget.java:15-27`). | as left | `OpenXRStereoRenderer` | ≈70 MB at 3 images per eye, 1680×1760, 32-bit depth (est; confirm the image count and the depth format) | Low, **if** nothing depth-tests into those targets. Check the post/FSAA copy into them first. | New. Not in FINDINGS; candidate 1q `swapchainNoDepth` |
+| X1 | **Don't give the swapchain wrapper targets depth.** Ours create each wrapper with `useDepth=true` (`VC:client_vr/provider/openxr/OpenXRStereoRenderer.java:61,64`); Visor wraps the images with no depth (`V:…/openxr/XrRenderTarget.java:15-27`). | as left | `OpenXRStereoRenderer` | ≈70 MB at 3 images per eye, 1680×1760, 32-bit depth (est; confirm the image count and the depth format) | Low. Checked: the only write is a colour-only fullscreen pass (`ShaderHelper.java:59-82,249`) | New: FINDINGS V16, candidate 1q `swapchainNoDepth` |
 | X2 | **Input pull model:** read each action once per frame with a reused `XrActionStateGetInfo` and subaction paths. No `xrEnumerateBoundSourcesForAction` in the read path; origins only for UI, cached, invalidated on `INTERACTION_PROFILE_CHANGED`. | `A:input/action/XRSingleAction.java:36`, `types/single/BoolButtonAction.java:34-57`, `XRState.java:82-84` | `MCOpenXR.readBoolean/readFloat/readVecData` (`:391,412,437,948-972`) | Removes hundreds of runtime calls per frame (V8 estimate 0.5–2 ms) | Low | Confirms 2c and improves on it: drop the calls instead of caching them |
 | X3 | **Visibility-driven aux targets:** create when shown, free when hidden (with a delay against churn); outline targets only for passes that render, freed on `initOutline`/`close`. | `V:…/RenderTargetGUI.java:97-130`, `V:core/client/render/VRRendererBase.java:239-255`, `V1215:…/LevelRendererMixin.java:137-186` | `VRRenderer.setupRenderConfiguration`, `MultiPassTextureTarget` | Part of the 50–70 MB in V2/V3 | Low | Confirms 1d/1e; adds "free on hide" |
 | X4 | **No mirror passes or targets when the window is 0×0** (always the case on the headset). | `V:…/VRRenderState.java:224-252` | `VRRenderer.getRenderPasses` | Small memory and CPU win if any mirror pass is active on device | Low | Fold into 1e |
@@ -68,7 +68,7 @@ our problem: crashes at about 6.3 GB, then CPU frame time.
 
 ## Open questions before porting
 
-- X1: list every write into `getLeftEyeTarget()`/`getRightEyeTarget()` and confirm that none has depth
-  test or depth write on. Measure the meminfo `Graphics` row with the toggle on and off.
+- X1: done in code (FINDINGS V16). Still to do: log the swapchain image count and measure the meminfo
+  `Graphics` row with the toggle on and off.
 - X8: check that the Quest runtime exposes `XR_KHR_visibility_mask` (log the enumerated extensions),
   and how LTW handles the depth pre-pass.
