@@ -407,6 +407,7 @@ public class UnityPlayerActivity extends ActivityGroup implements IUnityPlayerLi
     {
         super.onStart();
 
+        if (ClaudecraftUnityPause.isPausedInGame()) return; // claudecraft (unity.pauseInGame): stay paused in game
         mUnityPlayer.resume();
     }
 
@@ -423,6 +424,7 @@ public class UnityPlayerActivity extends ActivityGroup implements IUnityPlayerLi
     {
         super.onResume();
 
+        if (ClaudecraftUnityPause.isPausedInGame()) return; // claudecraft (unity.pauseInGame): stay paused in game
         mUnityPlayer.resume();
     }
 
@@ -454,6 +456,8 @@ public class UnityPlayerActivity extends ActivityGroup implements IUnityPlayerLi
     @Override public void onWindowFocusChanged(boolean hasFocus)
     {
         super.onWindowFocusChanged(hasFocus);
+        // claudecraft (unity.pauseInGame): no focus messages to a paused Unity (forwarded again when it resumes)
+        if (ClaudecraftUnityPause.isPausedInGame()) return;
         mUnityPlayer.windowFocusChanged(hasFocus);
     }
 
