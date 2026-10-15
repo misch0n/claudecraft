@@ -1,0 +1,54 @@
+modLoader = "javafml"
+loaderVersion = "[1,)"
+issueTrackerURL = "https://hammy275.com/immersivemcissues"
+license = "GNU LGPLv3"
+logoFile= "immersivemc_logo.png"
+
+[[mods]]
+modId = "immersivemc"
+version = "${version}"
+displayName = "ImmersiveMC"
+displayURL = "https://hammy275.com/immersivemcwiki"
+authors = "hammy275"
+updateJSONURL = "https://api.modrinth.com/updates/immersivemc/forge_updates.json"
+displayTest = "NONE"
+description = '''
+Minimizes the need to interact with GUIs in Minecraft!
+
+Works great both in and out of VR!
+
+Thanks to NahNotFox for the bundle bag model (the default) and the written book texture!
+
+Thanks to:
+- halfstorm for porting ImmersiveMC to 1.21.10!
+- andreiqwer for adding support for resizing item guides and a bugfix!
+- Blocker226 for fixing Z-fighting issues on several Immersives!
+- yaosiqian for Simplified Chinese translations!
+- Yermak for the Russian translations!
+- DadoSpeedy for the German translations!
+- Detective Scar for the Dutch translations!
+
+Thanks to the Vivecraft developers for inspiration for the bag, and to various members of the ImmersiveMC Discord for ideas!
+
+Thanks to the guide from leo3418 for the original config screen implementation!
+'''
+#logoFile = ""
+
+[[mixins]]
+config = "mixins.immersivemc.json"
+[[mixins]]
+config = "mixins.neoforge.immersivemc.json"
+
+[[dependencies.immersivemc]]
+modId = "neoforge"
+type = "required"
+versionRange = "[20.2,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.immersivemc]]
+modId = "minecraft"
+type = "required"
+versionRange = "[1.20.4,)"
+ordering = "NONE"
+side = "BOTH"
