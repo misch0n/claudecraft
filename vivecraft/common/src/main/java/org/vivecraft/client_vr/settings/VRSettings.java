@@ -772,6 +772,8 @@ public class VRSettings {
     public boolean ltwLinearFilterFix = true;
     @SettingField(VrOptions.XR_PERF_HINTS)
     public boolean xrPerfHints = false;
+    @SettingField(VrOptions.SHARED_EYE_CULLING)
+    public boolean sharedEyeCulling = false;
     //
 
     public ServerOverrides overrides = new ServerOverrides();
@@ -2613,7 +2615,8 @@ public class VRSettings {
         CACHE_INPUT_ORIGINS(OptionType.BOOLEAN),
         GL_ERROR_CHECKS(OptionType.BOOLEAN),
         LTW_LINEAR_FILTER_FIX(OptionType.BOOLEAN),
-        XR_PERF_HINTS(OptionType.BOOLEAN);
+        XR_PERF_HINTS(OptionType.BOOLEAN),
+        SHARED_EYE_CULLING(OptionType.BOOLEAN);
         private final OptionType type;
         private final float valueStep;
         private final float valueMin;

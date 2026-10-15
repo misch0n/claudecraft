@@ -185,6 +185,8 @@ public class VRPassHelper {
         // claudecraft: xrSessionStateHandling, no eye images this frame (runtime said don't render, or the
         // session is stopped): skip the eye passes, the empty frame is still submitted below
         boolean eyesAvailable = DATA_HOLDER.vrRenderer.isEyeFrameAvailable();
+        // claudecraft: sharedEyeCulling, per-frame state of the shared eye frustum
+        org.vivecraft.client_vr.perf.SharedEyeCulling.beginFrame(list, eyesAvailable);
         for (RenderPass renderpass : list) {
             // claudecraft: lazyAuxBuffers, a pass that got needed after setupRenderConfiguration still has its
             // placeholder target, skip it for this frame, the next setupRenderConfiguration gives it its real size

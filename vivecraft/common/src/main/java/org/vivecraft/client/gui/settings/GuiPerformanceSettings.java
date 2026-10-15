@@ -39,6 +39,7 @@ public class GuiPerformanceSettings extends GuiListScreen {
         entries.add(new SettingsList.CategoryEntry(Component.translatable("vivecraft.options.performance.rendering")));
         entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.GL_ERROR_CHECKS));
         entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.LTW_LINEAR_FILTER_FIX));
+        entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.SHARED_EYE_CULLING));
 
         entries.add(new SettingsList.CategoryEntry(Component.translatable("vivecraft.options.performance.diagnostics")));
         entries.add(SettingsList.vrOptionToEntry(VRSettings.VrOptions.PERF_MEMORY_LOG));

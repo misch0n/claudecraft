@@ -2,6 +2,7 @@ package org.vivecraft.mixin.client_vr.renderer;
 
 import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.llamalad7.mixinextras.injector.ModifyReturnValue;
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
@@ -27,6 +28,8 @@ import net.minecraft.util.profiling.Profiler;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.lighting.LevelLightEngine;
+import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -43,6 +46,7 @@ import org.vivecraft.client_vr.extensions.GameRendererExtension;
 import org.vivecraft.client_vr.extensions.LevelRendererExtension;
 import org.vivecraft.client_vr.extensions.LevelTargetBundleExtension;
 import org.vivecraft.client_vr.gameplay.interact_modules.BlockInteractionModule;
+import org.vivecraft.client_vr.perf.SharedEyeCulling;
 import org.vivecraft.client_vr.render.helpers.RenderHelper;
 import org.vivecraft.client_vr.render.helpers.VREffectsHelper;
 import org.vivecraft.client_vr.settings.VRSettings;
@@ -148,6 +152,18 @@ public abstract class LevelRendererVRMixin implements ResourceManagerReloadListe
     private boolean vivecraft$noPlayerWhenSleeping(boolean isSleeping) {
         // no self render, we don't want an out-of-body experience
         return isSleeping && RenderPassType.isVanilla();
+    }
+
+    // claudecraft: sharedEyeCulling, both eye passes cull with one frustum that contains both eyes (PLAN 3)
+    @WrapMethod(method = "prepareCullFrustum(Lnet/minecraft/world/phys/Vec3;Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;)V")
+    private void vivecraft$sharedEyeCullingFrustum(
+        Vec3 cameraPosition, Matrix4f frustumMatrix, Matrix4f projectionMatrix, Operation<Void> original)
+    {
+        if (!RenderPassType.isVanilla() && SharedEyeCulling.useUnion(cameraPosition, projectionMatrix)) {
+            original.call(SharedEyeCulling.unionOrigin(), frustumMatrix, SharedEyeCulling.unionProjection());
+        } else {
+            original.call(cameraPosition, frustumMatrix, projectionMatrix);
+        }
     }
 
     // claudecraft: shareOutlineTargets, the outline target of a pass is only allocated once something glows in it

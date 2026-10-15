@@ -1039,6 +1039,8 @@
   "vivecraft.options.CACHE_INPUT_ORIGINS.tooltip": "Looks up which controller button each action is bound to once, and again only when the controllers change, instead of asking the runtime every frame.",
   "vivecraft.options.XR_PERF_HINTS": "Runtime Performance Hints",
   "vivecraft.options.XR_PERF_HINTS.tooltip": "Tells the headset runtime which thread renders and asks for sustained high CPU and GPU levels. May increase heat.\n\nTakes effect after VR restarts.",
+  "vivecraft.options.SHARED_EYE_CULLING": "Shared Eye Culling",
+  "vivecraft.options.SHARED_EYE_CULLING.tooltip": "Both eyes use one culling frustum, and the right eye reuses the chunk lists Sodium built for the left eye instead of culling the world again. Saves CPU time per frame. Needs Sodium.\n\nExperimental: look for chunks missing or flickering at the edges of your view.",
   "vivecraft.options.GL_ERROR_CHECKS": "OpenGL Error Checks",
   "vivecraft.options.GL_ERROR_CHECKS.tooltip": "Checks for OpenGL errors several times per frame. Only useful for debugging; each check can stall the graphics driver.",
   "vivecraft.options.LTW_LINEAR_FILTER_FIX": "Smooth GUI Filtering",

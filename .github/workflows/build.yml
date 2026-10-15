@@ -81,7 +81,7 @@ jobs:
           path: ${{ steps.meta.outputs.jar }}
           if-no-files-found: error
 
-  # Launches the dev client (Fabric + Sodium + our Vivecraft) under Xvfb with software GL, VR on via the
+  # Launches the dev client (Fabric + Sodium 0.6.13 + our Vivecraft) under Xvfb with software GL, VR on via the
   # headset-less NULLVR provider, quick-plays into a flat world, and fails on crashes or mixin errors.
   # Desktop GL, not the headset's GL ES/OpenXR path: it proves startup, VR init, menu world and a world
   # join, not headset behaviour.
@@ -92,7 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # fixes-on: our defaults and our launcher's JVM heap policy.
+        # fixes-on: our defaults and our launcher's JVM heap policy, plus sharedEyeCulling (default off) so CI runs it.
         # fixes-off: every claudecraft toggle off (= the original Vivecraft code paths) and QuestCraft-like JVM flags.
         variant: [fixes-on, fixes-off]
     steps:
@@ -127,10 +127,16 @@ jobs:
           if [ "${{ matrix.variant }}" = fixes-off ]; then
             off='"freeMenuWorldInGame":"false","shareOutlineTargets":"false","lazyAuxBuffers":"false","fixSupporterLeak":"false","clearTrackerRefs":"false","xrStartupRetry":"false","xrSessionStateHandling":"false","xrLateFrameWait":"false","cacheInputOrigins":"false","glErrorChecks":"true","ltwLinearFilterFix":"false","xrRefreshRate":"MAX",'
           else
-            off=''
+            off='"sharedEyeCulling":"true",'
           fi
           printf '{%s"vrEnabled":"true","rememberVr":"true","stereoProviderPluginID":"NULLVR","alwaysShowUpdates":"false"}\n' "$off" > config/vivecraft-client-config.json
           cat config/vivecraft-client-config.json
+      - name: Sodium 0.6.13 (the version QuestCraft 6.0.0 installs)
+        run: |
+          mkdir -p vivecraft/fabric/run/mods
+          url=$(curl -fsSL https://api.modrinth.com/v2/project/sodium/version/mc1.21.5-0.6.13-fabric | python3 -c 'import json,sys; print(json.load(sys.stdin)["files"][0]["url"])')
+          curl -fsSL -o vivecraft/fabric/run/mods/sodium-fabric-0.6.13+mc1.21.5.jar "$url"
+          ls -l vivecraft/fabric/run/mods
       - name: Run client, join the world, wait for the 60 s memory line
         working-directory: vivecraft
         run: |
@@ -188,6 +194,10 @@ jobs:
           if grep -q 'BUILD FAILED' client.log; then echo "::error::build failed"; grep -E '\.java:[0-9]+: error:' -A2 client.log | head -60; fail=1; fi
           if grep -rq 'class PerfProbe' common/src; then
             grep -q '\[VCPERF\] config' "$log" || { echo "::error::no [VCPERF] config line (VR did not start?)"; fail=1; }
+            if grep -rq 'class SharedEyeCulling' common/src && [ "${{ matrix.variant }}" = fixes-on ]; then
+              grep -q '\[VCPERF\] cull .*sodiumHook=true' "$log" || { echo "::error::Sodium setupTerrain hook never ran"; fail=1; }
+              grep -q -E '\[VCPERF\] cull .*framesShared=[1-9]' "$log" || { echo "::error::sharedEyeCulling never shared a frame"; fail=1; }
+            fi
             grep -q 'label=join+60s' "$log" || { echo "::error::did not stay in the world for 60 s"; fail=1; }
           fi
           mkdir -p ../report && exec > >(tee ../report/smoke-${{ matrix.variant }}.txt) 2>&1
@@ -196,6 +206,7 @@ jobs:
           grep -o -E 'label=(vr_init|join|join\+60s|leave) heapUsed=[0-9-]+M heapCommitted=[0-9-]+M heapMax=[0-9-]+M metaspace=[0-9-]+M classSpace=[0-9-]+M codeCache=[0-9-]+M direct=[0-9-]+M VmRSS=[0-9]+M' "$log" | head -6 || true
           echo "VR init: $(grep -c -E 'Vivecraft: (Garbage collector|OpenXR|NullVR)|\[VCPERF\] config' "$log") | world joined: $(grep -c -E 'joined the game|Loaded [0-9]+ advancements|label=join ' "$log") | VCPERF lines: $(grep -c '\[VCPERF\]' "$log") | errors: $(grep -c -E 'ERROR\]' "$log")"
           grep -E '\[VCPERF\] (config|mem label=(vr_init|join|join\+60s|leave))' "$log" | cut -c1-330 | head -8 || true
+          grep -E '\[VCPERF\] cull' "$log" | sed 's/.*\[VCPERF\]/[VCPERF]/' | cut -c1-330 | head -4 || true
           grep -n -E 'ERROR\]|Exception' "$log" | grep -v -i -E 'sound|openal|realms|telemetry|narrator' | cut -c1-250 | head -15 || true
           [ -f fabric/run/logs/latest.log ] || { echo "no game log; end of client.log:"; tail -25 client.log | cut -c1-300; }
           echo "=== END SUMMARY (fail=$fail) ==="

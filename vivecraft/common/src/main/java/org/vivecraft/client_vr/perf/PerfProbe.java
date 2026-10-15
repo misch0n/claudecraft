@@ -57,11 +57,13 @@ public final class PerfProbe {
             "[VCPERF] config reason={} build={} perfMemoryLog={} freeMenuWorldInGame={} " +
                 "shareOutlineTargets={} lazyAuxBuffers={} fixSupporterLeak={} clearTrackerRefs={} " +
                 "xrStartupRetry={} xrSessionStateHandling={} xrLateFrameWait={} xrRefreshRate={} " +
-                "cacheInputOrigins={} glErrorChecks={} ltwLinearFilterFix={} xrPerfHints={} menuWorldSelection={} {}",
+                "cacheInputOrigins={} glErrorChecks={} ltwLinearFilterFix={} xrPerfHints={} sharedEyeCulling={} " +
+                "menuWorldSelection={} {}",
             reason, Xloader.getModVersion(), s.perfMemoryLog, s.freeMenuWorldInGame,
             s.shareOutlineTargets, s.lazyAuxBuffers, s.fixSupporterLeak, s.clearTrackerRefs,
             s.xrStartupRetry, s.xrSessionStateHandling, s.xrLateFrameWait, s.xrRefreshRate,
-            s.cacheInputOrigins, s.glErrorChecks, s.ltwLinearFilterFix, s.xrPerfHints, s.menuWorldSelection,
+            s.cacheInputOrigins, s.glErrorChecks, s.ltwLinearFilterFix, s.xrPerfHints, s.sharedEyeCulling,
+            s.menuWorldSelection,
             EXTRA);
         if (!jvmLogged) {
             jvmLogged = true;
@@ -105,6 +107,10 @@ public final class PerfProbe {
         if (now - lastPeriodic >= PERIOD_NANOS) {
             lastPeriodic = now;
             milestone("periodic");
+            VRSettings s = ClientDataHolderVR.getInstance().vrSettings;
+            if (s != null && s.perfMemoryLog) {
+                SharedEyeCulling.logStats("periodic");
+            }
         }
     }
 
