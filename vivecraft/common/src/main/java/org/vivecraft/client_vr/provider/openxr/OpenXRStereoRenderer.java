@@ -1,15 +1,17 @@
 package org.vivecraft.client_vr.provider.openxr;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import net.minecraft.util.Tuple;
+import net.minecraft.util.profiling.Profiler;
 import org.joml.Matrix4f;
+import org.joml.Vector2i;
+import org.joml.Vector2ic;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.openxr.*;
 import org.lwjgl.system.MemoryStack;
 import org.vivecraft.client_vr.VRTextureTarget;
 import org.vivecraft.client_vr.provider.VRRenderer;
 import org.vivecraft.client_vr.render.RenderConfigException;
-import org.vivecraft.client_vr.render.helpers.RenderHelper;
+import org.vivecraft.client_vr.render.helpers.graphics.GraphicsHelper;
 
 import java.io.IOException;
 import java.nio.IntBuffer;
@@ -19,7 +21,6 @@ public class OpenXRStereoRenderer extends VRRenderer {
     private final int[] swapIndex = new int[] {0, 0}; // Needs to be initialized otherwise stuff splodes
     private VRTextureTarget[] leftFramebuffers;
     private VRTextureTarget[] rightFramebuffers;
-    private boolean render;
     private XrCompositionLayerProjectionView.Buffer projectionLayerViews;
     private boolean recalculateProjectionMatrix = true;
 
@@ -58,11 +59,11 @@ public class OpenXRStereoRenderer extends VRRenderer {
                 for (int i1 = 0; i1 < imageCount; i1++) {
                     XrSwapchainImageOpenGLKHR openxrImage = swapchainImageBuffer.get(i1);
                     if(i == 0) {
-                        this.leftFramebuffers[i1] = new VRTextureTarget("L Eye " + i1, width, height, true, openxrImage.image(), true, false, false, true);
-                        leftError = RenderHelper.checkGLError("Left Eye " + i1 + " framebuffer setup");
+                        this.leftFramebuffers[i1] = VRTextureTarget.builder("L Eye").withSize(width, height).withTexId(openxrImage.image()).withLinearFilter().build();
+                        leftError = GraphicsHelper.INSTANCE.checkError("Left Eye " + i1 + " framebuffer setup");
                     } else {
-                        this.rightFramebuffers[i1] = new VRTextureTarget("R Eye " + i1, width, height, true, openxrImage.image(), true, false, false, true);
-                        rightError = RenderHelper.checkGLError("Right Eye " + i1 + " framebuffer setup");
+                        this.rightFramebuffers[i1] = VRTextureTarget.builder("R Eye").withSize(width, height).withTexId(openxrImage.image()).withLinearFilter().build();
+                        rightError = GraphicsHelper.INSTANCE.checkError("Right Eye " + i1 + " framebuffer setup");
                     }
                 }
                 if (this.lastError.isEmpty()) {
@@ -76,7 +77,7 @@ public class OpenXRStereoRenderer extends VRRenderer {
     public void setupRenderConfiguration(boolean render) throws IOException, RenderConfigException {
         super.setupRenderConfiguration(render);
 
-        if (!render) return;
+        if(!render) return;
 
         this.projectionLayerViews = XrCompositionLayerProjectionView.calloc(2);
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -174,11 +175,17 @@ public class OpenXRStereoRenderer extends VRRenderer {
 
     @Override
     public RenderTarget getLeftEyeTarget() {
+        if(this.leftFramebuffers == null) {
+            return null;
+        }
         return this.leftFramebuffers[this.swapIndex[0]];
     }
 
     @Override
     public RenderTarget getRightEyeTarget() {
+        if(this.leftFramebuffers == null) {
+            return null;
+        }
         return this.rightFramebuffers[this.swapIndex[1]];
     }
 
@@ -188,8 +195,8 @@ public class OpenXRStereoRenderer extends VRRenderer {
     }
 
     @Override
-    public Tuple<Integer, Integer> getRenderTextureSizes() {
-        return new Tuple<>(this.openxr.width, this.openxr.height);
+    public Vector2ic getRenderTextureSizes() {
+        return new Vector2i(this.openxr.width, this.openxr.height);
     }
 
     @Override

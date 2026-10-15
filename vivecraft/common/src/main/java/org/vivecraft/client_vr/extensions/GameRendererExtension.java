@@ -14,7 +14,7 @@ public interface GameRendererExtension {
     /**
      * @return if the camera in a block
      */
-    float vivecraft$isInBlock();
+    boolean vivecraft$isInBlock();
 
     /**
      * set the player position/rotation to the current VR pass location
@@ -41,11 +41,6 @@ public interface GameRendererExtension {
      * @return the cached original player position
      */
     Vec3 vivecraft$getRvePos(float partialTick);
-
-    /**
-     * @return the point the player is pointing at
-     */
-    Vec3 vivecraft$getCrossVec();
 
     /**
      * resets the projection matrix

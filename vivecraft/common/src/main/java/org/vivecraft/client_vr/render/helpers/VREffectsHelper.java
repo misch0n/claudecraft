@@ -31,11 +31,11 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import org.apache.commons.lang3.tuple.Triple;
+import org.apache.commons.lang3.tuple.Pair;
 import org.joml.*;
-import org.lwjgl.opengl.GL11C;
+import org.vivecraft.Xevents;
+import org.vivecraft.api.client.data.RenderPass;
 import org.vivecraft.client.VivecraftVRMod;
-import org.vivecraft.client.Xevents;
 import org.vivecraft.client.extensions.EntityRenderStateExtension;
 import org.vivecraft.client.gui.VivecraftClickEvent;
 import org.vivecraft.client.gui.settings.GuiOtherHUDSettings;
@@ -54,7 +54,7 @@ import org.vivecraft.client_vr.gameplay.screenhandlers.KeyboardHandler;
 import org.vivecraft.client_vr.gameplay.screenhandlers.RadialHandler;
 import org.vivecraft.client_vr.gameplay.trackers.TelescopeTracker;
 import org.vivecraft.client_vr.provider.ControllerType;
-import org.vivecraft.client_vr.render.RenderPass;
+import org.vivecraft.client_vr.render.helpers.graphics.GraphicsHelper;
 import org.vivecraft.client_vr.render.rendertypes.VRRenderTypes;
 import org.vivecraft.client_vr.settings.VRSettings;
 import org.vivecraft.common.utils.MathUtils;
@@ -94,10 +94,10 @@ public class VREffectsHelper {
      *
      * @param pos  position to check
      * @param dist distance where it should still count as inside the block
-     * @return null if there is no block, else a triple containing 1.0F,
+     * @return null if there is no block, else a tuple containing
      * BlockState and BlockPos of the blocking block
      */
-    public static Triple<Float, BlockState, BlockPos> getNearOpaqueBlock(Vec3 pos, double dist) {
+    public static Pair<BlockState, BlockPos> getNearOpaqueBlock(Vec3 pos, double dist) {
         if (MC.level == null) {
             return null;
         } else {
@@ -105,7 +105,7 @@ public class VREffectsHelper {
             Stream<BlockPos> stream = BlockPos.betweenClosedStream(aabb).filter((bp) ->
                 MC.level.getBlockState(bp).isSolidRender());
             Optional<BlockPos> optional = stream.findFirst();
-            return optional.map(blockPos -> Triple.of(1.0F, MC.level.getBlockState(blockPos), blockPos)).orElse(null);
+            return optional.map(blockPos -> Pair.of(MC.level.getBlockState(blockPos), blockPos)).orElse(null);
         }
     }
 
@@ -172,7 +172,7 @@ public class VREffectsHelper {
         float alpha = TelescopeTracker.viewPercent(c);
         // draw spyglass view
         RenderHelper.drawSizedQuadFullbright(720.0F, 720.0F, scale, new float[]{alpha, alpha, alpha, 1},
-            poseStack.last().pose(), VRRenderTypes.entitySolid(scopeView));
+            poseStack.last().pose(), VRRenderTypes.entitySolidNoCardinalLight(scopeView));
 
         // draw spyglass overlay
         // slight offset to not cause z fighting
@@ -195,19 +195,19 @@ public class VREffectsHelper {
     public static void drawEyeStencil() {
         if (DATA_HOLDER.vrSettings.vrUseStencil) {
             if (StencilHelper.stencilBufferSupported()) {
-                WAS_STENCIL_ON = GL11C.glIsEnabled(GL11C.GL_STENCIL_TEST);
+                WAS_STENCIL_ON = GraphicsHelper.INSTANCE.isStencil();
                 if (WAS_STENCIL_ON && !DATA_HOLDER.showedStencilMessage &&
                     DATA_HOLDER.vrSettings.showChatMessageStencil)
                 {
                     DATA_HOLDER.showedStencilMessage = true;
-                    MC.gui.getChat().addMessage(Component.translatable("vivecraft.messages.stencil",
+                    ClientUtils.addChatMessage(Component.translatable("vivecraft.messages.stencil",
                         Component.translatable("vivecraft.messages.3options",
                                 Component.translatable("options.title"),
                                 Component.translatable("vivecraft.options.screen.main"),
                                 Component.translatable("vivecraft.options.screen.stereorendering"))
                             .withStyle(style -> style.withClickEvent(
                                     new VivecraftClickEvent(VivecraftClickEvent.VivecraftAction.OPEN_SCREEN,
-                                        new GuiRenderOpticsSettings(null)))
+                                        () -> new GuiRenderOpticsSettings(null)))
                                 .withHoverEvent(new HoverEvent.ShowText(
                                     Component.translatable("vivecraft.messages.openSettings")))
                                 .withColor(ChatFormatting.GREEN)
@@ -218,7 +218,7 @@ public class VREffectsHelper {
                                 Component.translatable("vivecraft.options.screen.guiother"))
                             .withStyle(style -> style.withClickEvent(
                                     new VivecraftClickEvent(VivecraftClickEvent.VivecraftAction.OPEN_SCREEN,
-                                        new GuiOtherHUDSettings(null)))
+                                        () -> new GuiOtherHUDSettings(null)))
                                 .withHoverEvent(new HoverEvent.ShowText(
                                     Component.translatable("vivecraft.messages.openSettings")))
                                 .withColor(ChatFormatting.GREEN)
@@ -243,7 +243,7 @@ public class VREffectsHelper {
     public static void disableStencilTest() {
         // if we did enable the stencil test, disable it
         if (StencilHelper.stencilBufferSupported() && !WAS_STENCIL_ON) {
-            GL11C.glDisable(GL11C.GL_STENCIL_TEST);
+            GraphicsHelper.INSTANCE.setStencil(false);
         }
     }
 
@@ -272,8 +272,8 @@ public class VREffectsHelper {
      */
     public static void renderMenuPanorama(Matrix4fStack poseStack) {
         RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
-            MC.getMainRenderTarget().getColorTexture(), ARGB.opaque(0),
-            MC.getMainRenderTarget().getDepthTexture(), 1F);
+            MC.getMainRenderTarget().getColorTexture(), 0xFF000000,
+            MC.getMainRenderTarget().getDepthTexture(), 1.0);
 
         RenderSystem.setShaderColor(1, 1, 1, 1);
 
@@ -422,8 +422,8 @@ public class VREffectsHelper {
      */
     public static void renderJrbuddasAwesomeMainMenuRoomNew(Matrix4fStack poseStack) {
         RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
-            MC.getMainRenderTarget().getColorTexture(), ARGB.opaque(0),
-            MC.getMainRenderTarget().getDepthTexture(), 1F);
+            MC.getMainRenderTarget().getColorTexture(), 0xFF000000,
+            MC.getMainRenderTarget().getDepthTexture(), 1.0);
         RenderSystem.setShaderColor(1, 1, 1, 1);
 
         int repeat = 4; // texture wraps per meter
@@ -523,9 +523,7 @@ public class VREffectsHelper {
         RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
 
         // transfer the rotation
-        //poseStack.pushMatrix().identity();
-        //RenderSystem.getModelViewStack().mul(poseStack, poseStack);
-        RenderSystem.getModelViewStack().pushMatrix().mul(poseStack);//.identity();
+        RenderSystem.getModelViewStack().pushMatrix().mul(poseStack);
         poseStack = RenderSystem.getModelViewStack();
 
         try {
@@ -541,8 +539,8 @@ public class VREffectsHelper {
                 .clearColorAndDepthTextures(MC.getMainRenderTarget().getColorTexture(),
                     ARGB.colorFromFloat(0.0f, DATA_HOLDER.menuWorldRenderer.fogRenderer.fogRed,
                         DATA_HOLDER.menuWorldRenderer.fogRenderer.fogGreen,
-                        DATA_HOLDER.menuWorldRenderer.fogRenderer.fogBlue), MC.getMainRenderTarget().getDepthTexture(),
-                    1.0);
+                        DATA_HOLDER.menuWorldRenderer.fogRenderer.fogBlue),
+                    MC.getMainRenderTarget().getDepthTexture(), 1.0);
 
             DATA_HOLDER.menuWorldRenderer.updateLightmap();
             // render world
@@ -592,8 +590,76 @@ public class VREffectsHelper {
             RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
         } finally {
             // reset stacks
-            //poseStack.popMatrix();
             RenderSystem.getModelViewStack().popMatrix();
+        }
+    }
+
+    /**
+     * renders the menu environment, aswell as hands, screen and keyboard
+     */
+    public static void renderMenuRoom(float partialTick) {
+        // clear depth for menu environment
+        RenderSystem.getDevice().createCommandEncoder().clearDepthTexture(MC.mainRenderTarget.getDepthTexture(), 1.0);
+
+        RenderSystem.getModelViewStack().pushMatrix().identity();
+        RenderHelper.applyVRModelView(DATA_HOLDER.currentPass, RenderSystem.getModelViewStack());
+
+        ((GameRendererExtension) MC.gameRenderer).vivecraft$resetProjectionMatrix(partialTick);
+
+        renderMenuEnvironment();
+        // render the screen always on top in the menu room to prevent z fighting
+        renderGuiLayer(partialTick, true);
+
+        DebugRenderHelper.renderDebug(partialTick);
+
+        if (KeyboardHandler.SHOWING) {
+            if (DATA_HOLDER.vrSettings.physicalKeyboard) {
+                renderPhysicalKeyboard(partialTick);
+            } else {
+                render2D(partialTick, KeyboardHandler.FRAMEBUFFER, KeyboardHandler.POS_ROOM,
+                    KeyboardHandler.ROTATION_ROOM, true);
+            }
+        }
+
+        if (DATA_HOLDER.currentPass != RenderPass.CAMERA &&
+            (DATA_HOLDER.currentPass != RenderPass.THIRD || DATA_HOLDER.vrSettings.mixedRealityRenderHands))
+        {
+            VRArmHelper.renderVRHands(partialTick, true, true, true, true);
+        }
+
+        RenderSystem.getModelViewStack().popMatrix();
+    }
+
+    /**
+     * renders the current menu environment
+     */
+    public static void renderMenuEnvironment() {
+        // MAIN MENU ENVIRONMENT
+
+        Matrix4fStack poseStack = new Matrix4fStack(8);
+
+        Vec3 eye = DATA_HOLDER.vrPlayer.vrdata_world_render.getEye(DATA_HOLDER.currentPass).getPosition();
+        poseStack.translate((float) (DATA_HOLDER.vrPlayer.vrdata_world_render.origin.x - eye.x),
+            (float) (DATA_HOLDER.vrPlayer.vrdata_world_render.origin.y - eye.y),
+            (float) (DATA_HOLDER.vrPlayer.vrdata_world_render.origin.z - eye.z));
+
+        // remove world rotation or the room doesn't align with the screen
+        poseStack.rotate(Axis.YN.rotation(-DATA_HOLDER.vrPlayer.vrdata_world_render.rotation_radians));
+
+        if (DATA_HOLDER.menuWorldRenderer.isReady()) {
+            try {
+                renderTechjarsAwesomeMainMenuRoom(poseStack);
+            } catch (Exception e) {
+                VRSettings.LOGGER.error(
+                    "Vivecraft: Error rendering main menu world, unloading to prevent more errors: ", e);
+                DATA_HOLDER.menuWorldRenderer.destroy();
+            }
+        } else {
+            if (DATA_HOLDER.vrSettings.menuWorldFallbackPanorama) {
+                renderMenuPanorama(poseStack);
+            } else {
+                renderJrbuddasAwesomeMainMenuRoomNew(poseStack);
+            }
         }
     }
 
@@ -614,6 +680,9 @@ public class VREffectsHelper {
         // mainly an issue with iris and the crumbling effect/nausea effect
         MC.renderBuffers().bufferSource().endBatch();
 
+        // remember the original buffer
+        RenderTarget mainTarget = MC.mainRenderTarget;
+
         Profiler.get().popPush("VR");
         renderCrosshairAtDepth(!DATA_HOLDER.vrSettings.useCrosshairOcclusion);
         DebugRenderHelper.renderDebug(partialTick);
@@ -621,44 +690,55 @@ public class VREffectsHelper {
         // switch to VR Occluded buffer, and copy main depth for occlusion
         LevelTargetBundleExtension extTargets = (LevelTargetBundleExtension) targets;
 
-        // remember the original buffer
-        RenderTarget mainTarget = MC.mainRenderTarget;
-
         RenderSystem.getDevice().createCommandEncoder()
-            .clearColorTexture(extTargets.vivecraft$getOccluded().get().getColorTexture(), 0);
+            .clearColorTexture(extTargets.vivecraft$getOccluded().get().getColorTexture(), 0x00000000);
         extTargets.vivecraft$getOccluded().get().copyDepthFrom(mainTarget);
         MC.mainRenderTarget = extTargets.vivecraft$getOccluded().get();
 
+        boolean renderHands = VRArmHelper.shouldRenderHands();
+
         if (shouldOccludeGui()) {
             renderGuiAndShadow(partialTick, false, false);
+            VRArmHelper.renderVRHands(partialTick, renderHands && DATA_HOLDER.menuHandMain,
+                renderHands && DATA_HOLDER.menuHandOff, true, true);
         }
+
+        // iris, need to end all, to have stuff rendered in the right order
+        MC.renderBuffers().bufferSource().endBatch();
 
         // switch to VR UnOccluded buffer, no depth copy
         RenderSystem.getDevice().createCommandEncoder()
-            .clearColorAndDepthTextures(extTargets.vivecraft$getUnoccluded().get().getColorTexture(), 0,
-                extTargets.vivecraft$getUnoccluded().get().getDepthTexture(), 1F);
+            .clearColorAndDepthTextures(extTargets.vivecraft$getUnoccluded().get().getColorTexture(), 0x00000000,
+                extTargets.vivecraft$getUnoccluded().get().getDepthTexture(), 1.0);
         MC.mainRenderTarget = extTargets.vivecraft$getUnoccluded().get();
 
         if (!shouldOccludeGui()) {
             renderGuiAndShadow(partialTick, false, false);
         }
 
-        renderVRSelfEffects(partialTick);
+        renderVRSelfEffects(partialTick, true);
         VRWidgetHelper.renderVRThirdPersonCamWidget();
         VRWidgetHelper.renderVRHandheldCameraWidget();
 
-        boolean renderHands = VRArmHelper.shouldRenderHands();
-        VRArmHelper.renderVRHands(partialTick, renderHands && DATA_HOLDER.menuHandMain,
-            renderHands && DATA_HOLDER.menuHandOff, true, true);
+        if (!shouldOccludeGui()) {
+            VRArmHelper.renderVRHands(partialTick, renderHands && DATA_HOLDER.menuHandMain,
+                renderHands && DATA_HOLDER.menuHandOff, true, true);
+        }
+
+        // iris, need to end all, to have stuff rendered in the right order
+        MC.renderBuffers().bufferSource().endBatch();
 
         // switch to VR hands buffer
         RenderSystem.getDevice().createCommandEncoder()
-            .clearColorTexture(extTargets.vivecraft$getHands().get().getColorTexture(), 0);
+            .clearColorTexture(extTargets.vivecraft$getHands().get().getColorTexture(), 0x00000000);
         extTargets.vivecraft$getHands().get().copyDepthFrom(mainTarget);
         MC.mainRenderTarget = extTargets.vivecraft$getHands().get();
 
         VRArmHelper.renderVRHands(partialTick, renderHands && !DATA_HOLDER.menuHandMain,
             renderHands && !DATA_HOLDER.menuHandOff, false, false);
+
+        // iris, need to end all, to have stuff rendered in the right order
+        MC.renderBuffers().bufferSource().endBatch();
 
         RenderSystem.setShaderColor(1, 1, 1, 1);
         // rebind the original buffer
@@ -693,6 +773,9 @@ public class VREffectsHelper {
             renderGuiAndShadow(partialTick, !shouldOccludeGui(), true);
         }
 
+        // iris, need to end all, to have stuff rendered in the right order
+        MC.renderBuffers().bufferSource().endBatch();
+
         // render hands in second pass when gui is open
         boolean renderHandsSecond =
             RadialHandler.isShowing() || KeyboardHandler.SHOWING || Minecraft.getInstance().screen != null;
@@ -703,7 +786,10 @@ public class VREffectsHelper {
                 DATA_HOLDER.menuHandMain, DATA_HOLDER.menuHandOff);
         }
 
-        renderVRSelfEffects(partialTick);
+        renderVRSelfEffects(partialTick, !secondPass);
+
+        // iris, need to end all, to have stuff rendered in the right order
+        MC.renderBuffers().bufferSource().endBatch();
     }
 
     /**
@@ -791,7 +877,7 @@ public class VREffectsHelper {
      *
      * @param partialTick current partial tick
      */
-    private static void renderVRSelfEffects(float partialTick) {
+    private static void renderVRSelfEffects(float partialTick, boolean firstPass) {
         // only render the fire in first person, other views have the burning entity
         if (DATA_HOLDER.currentPass != RenderPass.THIRD && DATA_HOLDER.currentPass != RenderPass.CAMERA &&
             !MC.player.isSpectator() && MC.player.isOnFire() && !Xevents.renderFireOverlay(MC.player, new PoseStack()))
@@ -799,12 +885,14 @@ public class VREffectsHelper {
             VREffectsHelper.renderFireInFirstPerson();
         }
 
-        // totem of undying
-        // this is screen relative, so no view rotation please
-        RenderSystem.getModelViewStack().pushMatrix().identity();
-        MC.gameRenderer.renderItemActivationAnimation(new GuiGraphics(MC, MC.renderBuffers().bufferSource()),
-            partialTick);
-        RenderSystem.getModelViewStack().popMatrix();
+        if (firstPass) {
+            // totem of undying
+            // this is screen relative, so no view rotation please
+            RenderSystem.getModelViewStack().pushMatrix().identity();
+            MC.gameRenderer.renderItemActivationAnimation(new GuiGraphics(MC, MC.renderBuffers().bufferSource()),
+                partialTick);
+            RenderSystem.getModelViewStack().popMatrix();
+        }
     }
 
     /**
@@ -842,13 +930,9 @@ public class VREffectsHelper {
             ((GameRendererExtension) MC.gameRenderer).vivecraft$getRveY()
         );
 
-        RenderType renderType;
-        TextureAtlasSprite textureAtlasSprite = ModelBakery.FIRE_1.sprite();
-        if (RenderPass.isThirdPerson(DATA_HOLDER.currentPass)) {
-            renderType = RenderType.guiTextured(textureAtlasSprite.atlasLocation());
-        } else {
-            renderType = RenderType.fireScreenEffect(textureAtlasSprite.atlasLocation());
-        }
+        RenderType renderType = VRRenderTypes.guiTextured(fireSprite.atlasLocation(),
+            // with depthtest in third
+            !RenderPass.isThirdPerson(DATA_HOLDER.currentPass));
 
         VertexConsumer consumer = MC.renderBuffers().bufferSource().getBuffer(renderType);
 
@@ -880,7 +964,7 @@ public class VREffectsHelper {
      * @param partialTick current partial tick
      */
     public static void renderPhysicalKeyboard(float partialTick) {
-        if (DATA_HOLDER.bowTracker.isDrawing) return;
+        if (DATA_HOLDER.bowTracker.isDrawing()) return;
 
         Profiler.get().push("renderPhysicalKeyboard");
 
@@ -947,8 +1031,6 @@ public class VREffectsHelper {
     private static void renderScreen(
         RenderTarget framebuffer, boolean depthAlways, boolean noFog, Vec3 pos, Matrix4f matrix)
     {
-        // disable culling to show the screen from both sides
-
         // cache fog distance
         FogParameters oldFog = RenderSystem.getShaderFog();
         float[] color = new float[]{1.0F, 1.0F, 1.0F, 1.0F};
@@ -967,7 +1049,7 @@ public class VREffectsHelper {
         }
 
         if (MC.level != null) {
-            if (isInsideOpaqueBlock(pos) || ((GameRendererExtension) MC.gameRenderer).vivecraft$isInBlock() > 0.0F) {
+            if (isInsideOpaqueBlock(pos) || ((GameRendererExtension) MC.gameRenderer).vivecraft$isInBlock()) {
                 pos = DATA_HOLDER.vrPlayer.vrdata_world_render.hmd.getPosition();
             }
 
@@ -979,11 +1061,11 @@ public class VREffectsHelper {
             {
                 RenderHelper.drawSizedQuadWithLightmap((float) MC.getWindow().getGuiScaledWidth(),
                     (float) MC.getWindow().getGuiScaledHeight(), 1.5F, light, color, matrix,
-                    VRRenderTypes.entityTranslucent(framebuffer.getColorTexture(), depthAlways), false);
+                    VRRenderTypes.entityTranslucentNoCardinalLight(framebuffer.getColorTexture(), depthAlways), false);
             } else {
                 RenderHelper.drawSizedQuadWithLightmap((float) MC.getWindow().getGuiScaledWidth(),
                     (float) MC.getWindow().getGuiScaledHeight(), 1.5F, light, color, matrix,
-                    VRRenderTypes.entityCutout(framebuffer.getColorTexture(), depthAlways), false);
+                    VRRenderTypes.entityCutoutNoCardinalLight(framebuffer.getColorTexture(), depthAlways), false);
             }
         } else {
             RenderHelper.drawSizedQuad(
@@ -1002,7 +1084,7 @@ public class VREffectsHelper {
      * @param depthAlways if the depth test should be disabled
      */
     public static void renderGuiLayer(float partialTick, boolean depthAlways) {
-        if (DATA_HOLDER.bowTracker.isDrawing) return;
+        if (DATA_HOLDER.bowTracker.isDrawing()) return;
         if (MC.screen == null && MC.options.hideGui) return;
         if (RadialHandler.isShowing()) return;
 
@@ -1010,39 +1092,7 @@ public class VREffectsHelper {
 
         removeNausea(partialTick);
 
-        Matrix4fStack poseStack = new Matrix4fStack(8);
-
-        // MAIN MENU ENVIRONMENT
-        if (MethodHolder.isInMenuRoom()) {
-            // render the screen always on top in the menu room to prevent z fighting
-            depthAlways = true;
-
-            poseStack.pushMatrix();
-            Vec3 eye = DATA_HOLDER.vrPlayer.vrdata_world_render.getEye(DATA_HOLDER.currentPass).getPosition();
-            poseStack.translate((float) (DATA_HOLDER.vrPlayer.vrdata_world_render.origin.x - eye.x),
-                (float) (DATA_HOLDER.vrPlayer.vrdata_world_render.origin.y - eye.y),
-                (float) (DATA_HOLDER.vrPlayer.vrdata_world_render.origin.z - eye.z));
-
-            // remove world rotation or the room doesn't align with the screen
-            poseStack.rotate(Axis.YN.rotation(-DATA_HOLDER.vrPlayer.vrdata_world_render.rotation_radians));
-
-            if (DATA_HOLDER.menuWorldRenderer.isReady()) {
-                try {
-                    renderTechjarsAwesomeMainMenuRoom(poseStack);
-                } catch (Exception e) {
-                    VRSettings.LOGGER.error(
-                        "Vivecraft: Error rendering main menu world, unloading to prevent more errors: ", e);
-                    DATA_HOLDER.menuWorldRenderer.destroy();
-                }
-            } else {
-                if (DATA_HOLDER.vrSettings.menuWorldFallbackPanorama) {
-                    renderMenuPanorama(poseStack);
-                } else {
-                    renderJrbuddasAwesomeMainMenuRoomNew(poseStack);
-                }
-            }
-            poseStack.popMatrix();
-        }
+        Matrix4f poseStack = new Matrix4f();
 
         Vec3 guiPos = GuiHandler.applyGUIModelView(DATA_HOLDER.currentPass, poseStack);
 
@@ -1065,7 +1115,7 @@ public class VREffectsHelper {
     public static void render2D(
         float partialTick, RenderTarget framebuffer, Vector3fc pos, Matrix4f rot, boolean depthAlways)
     {
-        if (DATA_HOLDER.bowTracker.isDrawing) return;
+        if (DATA_HOLDER.bowTracker.isDrawing()) return;
 
         Profiler.get().push("render2D");
 
@@ -1105,7 +1155,7 @@ public class VREffectsHelper {
      * @param partialTick current partial tick
      */
     public static void renderFaceOverlay(float partialTick) {
-        if (((GameRendererExtension) MC.gameRenderer).vivecraft$isInBlock() > 0.0F) {
+        if (((GameRendererExtension) MC.gameRenderer).vivecraft$isInBlock()) {
             renderFaceInBlock();
 
             // because this runs after the gameRenderer, the ModelViewStack is reset
@@ -1124,7 +1174,7 @@ public class VREffectsHelper {
      * renders a fullscreen black quad, to block the screen
      */
     public static void renderFaceInBlock() {
-        RenderType renderType = VRRenderTypes.debugQuads(true);
+        RenderType renderType = VRRenderTypes.quads(true);
         VertexConsumer consumer = MC.renderBuffers().bufferSource().getBuffer(renderType);
         // render a big quad 2 meters in front
         consumer.addVertex(-100.F, -100.F, -2.0F).setColor(0, 0, 0, 255);
@@ -1138,7 +1188,7 @@ public class VREffectsHelper {
      * @return if the crosshair should be rendered
      */
     private static boolean shouldRenderCrosshair() {
-        if (ClientDataHolderVR.VIEW_ONLY) {
+        if (DATA_HOLDER.viewOnly) {
             return false;
         } else if (MC.level == null) {
             return false;
@@ -1191,7 +1241,7 @@ public class VREffectsHelper {
 
         Profiler.get().push("crosshair");
 
-        Vec3 crosshairRenderPos = ((GameRendererExtension) MC.gameRenderer).vivecraft$getCrossVec();
+        Vec3 crosshairRenderPos = DATA_HOLDER.vrPlayer.crossVec;
         Vec3 crossDistance = crosshairRenderPos.subtract(
             DATA_HOLDER.vrPlayer.vrdata_world_render.getAim().getPosition());
 
@@ -1211,7 +1261,7 @@ public class VREffectsHelper {
             switch (blockhitresult.getDirection()) {
                 case DOWN -> {
                     modelView.rotate(
-                        Axis.YP.rotationDegrees(DATA_HOLDER.vrPlayer.vrdata_world_render.getAim().getYaw()));
+                        Axis.YP.rotationDegrees(-DATA_HOLDER.vrPlayer.vrdata_world_render.getAim().getYaw()));
                     modelView.rotate(Axis.XP.rotationDegrees(-90.0F));
                 }
                 case UP -> {

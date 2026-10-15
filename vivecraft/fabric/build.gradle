@@ -21,7 +21,7 @@ configurations {
 
 dependencies {
     modImplementation "net.fabricmc:fabric-loader:${rootProject.fabric_loader_version}"
-    modApi "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_api_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_api_version}"
 
     common(project(path: ":common", configuration: "namedElements")) { transitive false }
     shadowCommon(project(path: ":common", configuration: "transformProductionFabric")) { transitive false }
@@ -29,15 +29,15 @@ dependencies {
     modCompileOnly("dev.architectury:architectury-fabric:${rootProject.architectury_version}") { exclude group: "net.fabricmc" exclude group: "net.fabricmc.fabric-api" }
 
     // for sodium compat
-    modRuntimeOnly "maven.modrinth:sodium:mc1.21.5-0.6.11-fabric"
+    modCompileOnly "maven.modrinth:sodium:mc1.21.5-0.6.12-fabric"
 
     // for iris compat
-    modCompileOnly "maven.modrinth:iris:1.8.9+1.21.5-fabric"
-    modRuntimeOnly 'org.anarres:jcpp:1.4.14' //temp iris
-    modRuntimeOnly 'io.github.douira:glsl-transformer:2.0.0-pre13' //temp iris
+    modCompileOnly "maven.modrinth:iris:1.8.11+1.21.5-fabric"
+    modCompileOnly 'org.anarres:jcpp:1.4.14' //temp iris
+    modCompileOnly 'io.github.douira:glsl-transformer:3.0.0-pre3' //temp iris
 
     // for REI compat
-    modCompileOnly("me.shedaniel:RoughlyEnoughItems-fabric:18.0.796") { exclude group: "net.fabricmc" exclude group: "net.fabricmc.fabric-api" exclude group: "dev.architectury" }
+    modCompileOnly("me.shedaniel:RoughlyEnoughItems-fabric:19.0.809") { exclude group: "net.fabricmc" exclude group: "net.fabricmc.fabric-api" exclude group: "dev.architectury" }
 
     // for Pehkui compat
     modCompileOnly("com.github.Virtuoel:Pehkui:3.7.12") { exclude group: "net.fabricmc" exclude group: "net.fabricmc.fabric-api" }
@@ -48,7 +48,7 @@ dependencies {
     // modCompileOnly "maven.modrinth:indium:1.0.30+mc1.20.4"
 
     //mod menu
-    modApi("com.terraformersmc:modmenu:14.0.0-rc.2") { exclude group: "net.fabricmc" exclude group: "net.fabricmc.fabric-api" }
+    modCompileOnly("com.terraformersmc:modmenu:14.0.0") { exclude group: "net.fabricmc" exclude group: "net.fabricmc.fabric-api" }
 
     // for immersive portals compat
     modCompileOnly('com.github.iPortalTeam:ImmersivePortalsMod:v5.1.7-mc1.20.4') { exclude group: "net.fabricmc" exclude group: "net.fabricmc.fabric-api" }
@@ -76,6 +76,8 @@ dependencies {
     include(implementation("org.lwjgl:lwjgl-openxr:${rootProject.lwjgl_version}:natives-linux"))
 
     include(implementation("com.illposed.osc:javaosc-core:0.9"))
+    include(implementation("com.github.bhaptics:tact-java:0.1.4"))
+    include(implementation("org.java-websocket:Java-WebSocket:1.5.1"))
 
 }
 
@@ -119,19 +121,5 @@ sourcesJar {
 components.java {
     withVariantsFromConfiguration(project.configurations.shadowRuntimeElements) {
         skip()
-    }
-}
-
-publishing {
-    publications {
-        mavenFabric(MavenPublication) {
-            artifactId = rootProject.archives_base_name + "-" + project.name
-            from components.java
-        }
-    }
-
-    // See https://docs.gradle.org/current/userguide/publishing_maven.html for information on how to set up publishing.
-    repositories {
-        // Add repositories to publish to here.
     }
 }

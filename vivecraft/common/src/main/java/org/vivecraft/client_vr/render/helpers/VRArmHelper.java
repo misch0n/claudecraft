@@ -1,10 +1,10 @@
 package org.vivecraft.client_vr.render.helpers;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.core.BlockPos;
@@ -15,13 +15,13 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
+import org.vivecraft.api.client.data.RenderPass;
 import org.vivecraft.client.network.ClientNetworking;
 import org.vivecraft.client_vr.ClientDataHolderVR;
 import org.vivecraft.client_vr.gameplay.trackers.BowTracker;
-import org.vivecraft.client_vr.gameplay.trackers.ClimbTracker;
-import org.vivecraft.client_vr.render.RenderPass;
 import org.vivecraft.client_vr.render.rendertypes.VRRenderTypes;
 import org.vivecraft.client_vr.settings.VRSettings;
+import org.vivecraft.data.ViveItems;
 import org.vivecraft.mod_compat_vr.optifine.OptifineHelper;
 import org.vivecraft.mod_compat_vr.shaders.ShadersHelper;
 
@@ -38,7 +38,7 @@ public class VRArmHelper {
      * @return if first person hands should be rendered in the current RenderPass
      */
     public static boolean shouldRenderHands() {
-        if (ClientDataHolderVR.VIEW_ONLY) {
+        if (DATA_HOLDER.viewOnly) {
             return false;
         } else if (DATA_HOLDER.currentPass == RenderPass.THIRD) {
             return DATA_HOLDER.vrSettings.displayMirrorMode == VRSettings.MirrorMode.MIXED_REALITY;
@@ -61,26 +61,26 @@ public class VRArmHelper {
     {
         if (!renderMain && !renderOff) return;
         Profiler.get().push("hands");
-        ClientDataHolderVR.IS_FP_HAND = true;
+        DATA_HOLDER.isFpHand = true;
 
         VREffectsHelper.removeNausea(partialTick);
 
         if (renderMain) {
             // set main hand active, for the attack cooldown transparency
-            ClientDataHolderVR.IS_MAIN_HAND = true;
+            DATA_HOLDER.isMainHand = true;
 
             if (menuHandMain) {
-                renderMainMenuHand(0, false);
+                renderMenuHand(0, false);
             } else {
                 renderVRHand_Main(partialTick);
             }
 
-            ClientDataHolderVR.IS_MAIN_HAND = false;
+            DATA_HOLDER.isMainHand = false;
         }
 
         if (renderOff) {
             if (menuHandOff) {
-                renderMainMenuHand(1, false);
+                renderMenuHand(1, false);
             } else {
                 renderVRHand_Offhand(partialTick, true);
             }
@@ -88,7 +88,7 @@ public class VRArmHelper {
 
         VREffectsHelper.reAddNausea();
 
-        ClientDataHolderVR.IS_FP_HAND = false;
+        DATA_HOLDER.isFpHand = false;
         Profiler.get().pop();
     }
 
@@ -98,13 +98,9 @@ public class VRArmHelper {
      * @param c           controller to render the hand for
      * @param depthAlways if depth testing should be disabled for rendering
      */
-    public static void renderMainMenuHand(int c, boolean depthAlways) {
+    public static void renderMenuHand(int c, boolean depthAlways) {
         Matrix4f modelView = new Matrix4f();
         RenderHelper.setupRenderingAtController(c, modelView);
-
-        if (MC.getOverlay() == null) {
-            RenderSystem.setShaderTexture(0, RenderHelper.getGpuTexture(RenderHelper.WHITE_TEXTURE));
-        }
 
         Vec3i color = new Vec3i(64, 64, 64);
         byte alpha = (byte) 255;
@@ -129,7 +125,7 @@ public class VRArmHelper {
                 Mth.floor(color.getZ() * lightPercent));
         }
 
-        RenderType renderType = VRRenderTypes.debugQuads(depthAlways);
+        RenderType renderType = VRRenderTypes.quads(depthAlways && c == 0);
         VertexConsumer consumer = MC.renderBuffers().bufferSource().getBuffer(renderType);
 
         RenderHelper.renderBox(consumer, start, end, -0.02F, 0.02F, -0.0125F, 0.0125F, color, alpha, modelView);
@@ -144,8 +140,8 @@ public class VRArmHelper {
      */
     public static void renderVRHand_Main(float partialTick) {
         // don't render claws with model arms
-        if ((DATA_HOLDER.climbTracker.isClimbeyClimb() || ClimbTracker.isClaws(MC.player.getMainHandItem())) &&
-            ClientDataHolderVR.getInstance().vrSettings.shouldRenderSelf &&
+        if ((DATA_HOLDER.climbTracker.isClimbeyClimb() || ViveItems.isClimbingClaws(MC.player.getMainHandItem())
+        ) && ClientDataHolderVR.getInstance().vrSettings.shouldRenderSelf &&
             ClientDataHolderVR.getInstance().vrSettings.modelArmsMode == VRSettings.ModelArmsMode.COMPLETE)
         {
             return;
@@ -161,7 +157,7 @@ public class VRArmHelper {
         }
 
         // climbey override
-        if (DATA_HOLDER.climbTracker.isClimbeyClimb() && !ClimbTracker.isClaws(item) && override == null) {
+        if (DATA_HOLDER.climbTracker.isClimbeyClimb() && !ViveItems.isClimbingClaws(item) && override == null) {
             item = MC.player.getOffhandItem();
         }
 
@@ -177,7 +173,8 @@ public class VRArmHelper {
         MC.gameRenderer.itemInHandRenderer.renderArmWithItem(MC.player, partialTick,
             0.0F, InteractionHand.MAIN_HAND, MC.player.getAttackAnim(partialTick), item, 0.0F,
             poseStack, bufferSource,
-            MC.getEntityRenderDispatcher().getPackedLightCoords(MC.player, partialTick));
+            LevelRenderer.getLightColor(MC.player.level(),
+                BlockPos.containing(DATA_HOLDER.vrPlayer.getVRDataWorld().hmd.getPosition())));
 
         bufferSource.endBatch();
 
@@ -198,7 +195,7 @@ public class VRArmHelper {
         // don't render claws with model arms
         if (!ClientDataHolderVR.getInstance().vrSettings.shouldRenderSelf ||
             ClientDataHolderVR.getInstance().vrSettings.modelArmsMode != VRSettings.ModelArmsMode.COMPLETE ||
-            !(DATA_HOLDER.climbTracker.isClimbeyClimb() || ClimbTracker.isClaws(MC.player.getOffhandItem())))
+            !(DATA_HOLDER.climbTracker.isClimbeyClimb() || ViveItems.isClimbingClaws(MC.player.getOffhandItem())))
         {
             poseStack.pushPose();
             RenderHelper.setupRenderingAtController(1, poseStack.last().pose());
@@ -210,7 +207,7 @@ public class VRArmHelper {
             }
 
             // climbey override
-            if (DATA_HOLDER.climbTracker.isClimbeyClimb() && !ClimbTracker.isClaws(item) && override == null) {
+            if (DATA_HOLDER.climbTracker.isClimbeyClimb() && !ViveItems.isClimbingClaws(item) && override == null) {
                 item = MC.player.getMainHandItem();
             }
 
@@ -226,7 +223,8 @@ public class VRArmHelper {
             MC.gameRenderer.itemInHandRenderer.renderArmWithItem(MC.player, partialTick,
                 0.0F, InteractionHand.OFF_HAND, MC.player.getAttackAnim(partialTick), item, 0.0F,
                 poseStack, bufferSource,
-                MC.getEntityRenderDispatcher().getPackedLightCoords(MC.player, partialTick));
+                LevelRenderer.getLightColor(MC.player.level(),
+                    BlockPos.containing(DATA_HOLDER.vrPlayer.getVRDataWorld().hmd.getPosition())));
 
             bufferSource.endBatch();
 
@@ -344,10 +342,7 @@ public class VRArmHelper {
 
             // TODO SHADERS use a shader with lightmaps
 
-            // to make shaders work
-            RenderSystem.setShaderTexture(0, RenderHelper.getGpuTexture(RenderHelper.WHITE_TEXTURE));
-
-            RenderType renderType = RenderType.debugQuads();
+            RenderType renderType = VRRenderTypes.quads(false);
             VertexConsumer consumer = MC.renderBuffers().bufferSource().getBuffer(renderType);
 
             double VOffset = DATA_HOLDER.teleportTracker.lastTeleportArcDisplayOffset;

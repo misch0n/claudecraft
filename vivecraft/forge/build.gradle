@@ -2,10 +2,36 @@ plugins {
     id "com.github.johnrengelman.shadow" version "7.1.2"
 }
 
+def mixins = [
+    "vivecraft.mixins.json",
+    "vivecraft.forge.mixins.json",
+
+    "vivecraft.accessories.mixins.json",
+    "vivecraft.alexmobs.mixins.json",
+    "vivecraft.bedrockify.mixins.json",
+    "vivecraft.blur.mixins.json",
+    "vivecraft.cataclysm.mixins.json",
+    "vivecraft.dynamicfps.mixins.json",
+    "vivecraft.elementa.mixins.json",
+    "vivecraft.emf.mixins.json",
+    "vivecraft.epicfight.mixins.json",
+    "vivecraft.iris.mixins.json",
+    "vivecraft.mca.mixins.json",
+    "vivecraft.optifine.mixins.json",
+    "vivecraft.rei.mixins.json",
+    "vivecraft.resolutioncontrol.mixins.json",
+    "vivecraft.sereneseasons.mixins.json",
+    "vivecraft.sodium.mixins.json",
+    "vivecraft.voxy.mixins.json",
+    "vivecraft.xaerosmimimap.mixins.json",
+    "vivecraft.xaerosworldmap.mixins.json"
+]
+
 architectury {
     platformSetupLoomIde()
     forge()
 }
+
 loom {
     accessWidenerPath = project(":common").loom.accessWidenerPath
 
@@ -13,23 +39,9 @@ loom {
         convertAccessWideners = true
         extraAccessWideners.add loom.accessWidenerPath.get().asFile.name
 
-        mixinConfig "vivecraft.mixins.json"
-        mixinConfig "vivecraft.forge.mixins.json"
-
-        mixinConfig "vivecraft.accessories.mixins.json"
-        mixinConfig "vivecraft.alexmobs.mixins.json"
-        mixinConfig "vivecraft.bedrockify.mixins.json"
-        mixinConfig "vivecraft.blur.mixins.json"
-        mixinConfig "vivecraft.cataclysm.mixins.json"
-        mixinConfig "vivecraft.dynamicfps.mixins.json"
-        mixinConfig "vivecraft.emf.mixins.json"
-        mixinConfig "vivecraft.iris.mixins.json"
-        mixinConfig "vivecraft.mca.mixins.json"
-        mixinConfig "vivecraft.optifine.mixins.json"
-        mixinConfig "vivecraft.rei.mixins.json"
-        mixinConfig "vivecraft.resolutioncontrol.mixins.json"
-        mixinConfig "vivecraft.sereneseasons.mixins.json"
-        mixinConfig "vivecraft.sodium.mixins.json"
+        for(String mixin : mixins) {
+            mixinConfig(mixin)
+        }
     }
 }
 
@@ -61,6 +73,8 @@ dependencies {
     forgeRuntimeLibrary("org.lwjgl:lwjgl-openvr:${rootProject.lwjgl_version}:natives-macos") { transitive = false }
     forgeRuntimeLibrary("org.lwjgl:lwjgl-openvr:${rootProject.lwjgl_version}:natives-windows") { transitive = false }
     forgeRuntimeLibrary("com.illposed.osc:javaosc-core:0.9") { transitive = false }
+    forgeRuntimeLibrary("com.github.bhaptics:tact-java:0.1.4") { transitive = false }
+    forgeRuntimeLibrary("org.java-websocket:Java-WebSocket:1.5.1") { transitive = false }
 
     // Use custom OpenXR lib for Android and GLES bindings
     forgeRuntimeLibrary("QuestCraftPlusPlus:lwjgl3:${rootProject.lwjgl_version}:lwjgl-openxr-${rootProject.lwjgl_version}")
@@ -81,14 +95,8 @@ dependencies {
     implementation(include("io.github.llamalad7:mixinextras-forge:${rootProject.mixin_extras_version}"))
 
     include(implementation("com.illposed.osc:javaosc-core:0.9"))
-}
-
-processResources {
-    inputs.property "version", project.version
-
-    filesMatching("META-INF/mods.toml") {
-        expand "version": project.version
-    }
+    include(implementation("com.github.bhaptics:tact-java:0.1.4"))
+    include(implementation("org.java-websocket:Java-WebSocket:1.5.1"))
 }
 
 shadowJar {
@@ -126,19 +134,5 @@ sourcesJar {
 components.java {
     withVariantsFromConfiguration(project.configurations.shadowRuntimeElements) {
         skip()
-    }
-}
-
-publishing {
-    publications {
-        mavenForge(MavenPublication) {
-            artifactId = rootProject.archives_base_name + "-" + project.name
-            from components.java
-        }
-    }
-
-    // See https://docs.gradle.org/current/userguide/publishing_maven.html for information on how to set up publishing.
-    repositories {
-        // Add repositories to publish to here.
     }
 }

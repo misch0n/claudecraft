@@ -8,12 +8,13 @@ import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import org.vivecraft.api.client.Tracker;
+import org.vivecraft.api.client.data.RenderPass;
 import org.vivecraft.client_vr.ClientDataHolderVR;
 import org.vivecraft.client_vr.VRData;
-import org.vivecraft.client_vr.render.RenderPass;
 import org.vivecraft.common.utils.MathUtils;
 
-public class CameraTracker extends Tracker {
+public class CameraTracker implements Tracker {
     public static final ResourceLocation CAMERA_MODEL = ResourceLocation.fromNamespaceAndPath("vivecraft", "camera");
     public static final ResourceLocation CAMERA_DISPLAY_MODEL = ResourceLocation.fromNamespaceAndPath("vivecraft",
         "camera_display");
@@ -27,9 +28,12 @@ public class CameraTracker extends Tracker {
     private Vec3 startPosition;
     private Quaternionf startRotation;
     private boolean quickMode;
+    private final Minecraft mc;
+    private final ClientDataHolderVR dh;
 
     public CameraTracker(Minecraft mc, ClientDataHolderVR dh) {
-        super(mc, dh);
+        this.mc = mc;
+        this.dh = dh;
     }
 
     @Override
@@ -44,7 +48,19 @@ public class CameraTracker extends Tracker {
     }
 
     @Override
-    public void doProcess(LocalPlayer player) {
+    public void inactiveProcess(LocalPlayer player) {
+        this.visible = false;
+        this.quickMode = false;
+        this.stopMoving();
+    }
+
+    @Override
+    public ProcessType processType() {
+        return ProcessType.PER_FRAME;
+    }
+
+    @Override
+    public void activeProcess(LocalPlayer player) {
         if (this.startControllerPose != null) {
             VRData.VRDevicePose controllerPose = this.dh.vrPlayer.vrdata_world_render.getController(
                 this.startController);
@@ -75,18 +91,6 @@ public class CameraTracker extends Tracker {
         }
     }
 
-    @Override
-    public void reset(LocalPlayer player) {
-        this.visible = false;
-        this.quickMode = false;
-        this.stopMoving();
-    }
-
-    @Override
-    public EntryPoint getEntryPoint() {
-        return EntryPoint.SPECIAL_ITEMS; // smoother camera movement
-    }
-
     public boolean isVisible() {
         return this.visible;
     }
@@ -109,7 +113,9 @@ public class CameraTracker extends Tracker {
      * @return position relative to the room origin
      */
     public Vector3f getRoomPosition(Vec3 roomOrigin) {
-        if (roomOrigin == Vec3.ZERO && this.dh.vrPlayer != null) {
+        if (!isVisible()) {
+            return this.dh.vr.getEyePosition(RenderPass.CENTER).add(0, 1, 0);
+        } else if (roomOrigin == Vec3.ZERO && this.dh.vrPlayer != null) {
             return MathUtils.subtractToVector3f(this.position, this.dh.vrPlayer.roomOrigin);
         } else {
             return MathUtils.subtractToVector3f(this.position, roomOrigin);

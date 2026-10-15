@@ -1,6 +1,12 @@
+buildscript {
+    dependencies {
+        classpath("net.fabricmc:tiny-remapper:0.12.2")
+    }
+}
+
 plugins {
     id "architectury-plugin" version "3.4-SNAPSHOT"
-    id "dev.architectury.loom" version "1.10-SNAPSHOT" apply false
+    id "dev.architectury.loom" version "1.13-SNAPSHOT" apply false
 }
 
 architectury {
@@ -11,7 +17,7 @@ subprojects {
     apply plugin: "java"
     apply plugin: "dev.architectury.loom"
 
-    archivesBaseName = rootProject.archives_base_name
+    archivesBaseName = rootProject.mod_id
     version = rootProject.minecraft_version + "-" + rootProject.mod_version
     group = rootProject.maven_group
 
@@ -41,11 +47,21 @@ subprojects {
 
         // for OSC tracker support
         implementation("com.illposed.osc:javaosc-core:0.9")
+
+        // bHaptics Integration
+        implementation("com.github.bhaptics:tact-java:0.1.4")
+
+        // for potential vulkan support
+        compileOnly("org.lwjgl:lwjgl-vulkan:${rootProject.lwjgl_version}") { transitive = false }
+
+        // for running testing
+        testImplementation("org.junit.jupiter:junit-jupiter:5.7.1")
+        testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     }
 
     tasks.withType(JavaCompile).configureEach {
         options.encoding = "UTF-8"
-        options.release = 21
+        options.release = Integer.parseInt(rootProject.java_version)
     }
 
     java {
@@ -53,6 +69,45 @@ subprojects {
     }
 
     processResources {
+        var expandProps = [
+            'version'              : version,
+            'java_version'         : java_version,
+            'mod_id'               : mod_id,
+            'mod_name'             : mod_name,
+            'mod_authors'          : mod_authors,
+            'mod_authors_array'    : mod_authors.split(",").collect { it.trim() }.join("\",\""),
+            'license'              : license,
+            'description'          : mod_description,
+            'discord'              : discord,
+            'kofi'                 : kofi,
+            'website'              : website,
+            'issue_tracker'        : issue_tracker,
+            'sources'              : sources,
+
+            'fabric_mc_range'      : fabric_mc_range,
+            'fabric_loader_version': fabric_loader_version,
+
+            'forge_mc_range'       : forge_mc_range,
+            'forge_loader_range'   : forge_loader_range,
+
+            'neoforge_mc_range'    : neoforge_mc_range,
+            'neoforge_loader_range': neoforge_loader_range,
+        ]
+
+        var jsonExpandProps = expandProps.collectEntries {
+            key, value -> [(key): value instanceof String ? value.replace("\n", "\\\\n") : value]
+        }
+
+        filesMatching(['META-INF/mods.toml', 'META-INF/neoforge.mods.toml']) {
+            expand expandProps
+        }
+
+        filesMatching(['pack.mcmeta', 'fabric.mod.json']) {
+            expand jsonExpandProps
+        }
+
+        inputs.properties(expandProps)
+
         if (project.name != "common" && project.name != "stubs") {
             // copy resources except the mixin jsons
             from(project(':common').sourceSets['main'].resources) {
@@ -65,7 +120,7 @@ subprojects {
         duplicatesStrategy = DuplicatesStrategy.INCLUDE
         if (project.name != "common" && project.name != "stubs") {
             from remapJar
-            into "../build/libs"
+            into rootProject.layout.buildDirectory.dir("libs")
         }
     }
 
@@ -73,11 +128,129 @@ subprojects {
         // after remap, copy the final jar to the main /build/libs folder
         finalizedBy copyJarToMain
     }
+
+    javadoc {
+        if (project.name != "common") {
+            enabled = false
+        }
+        destinationDir = file(rootProject.layout.buildDirectory.file("javadoc"))
+        include 'org/vivecraft/api/**'
+        options.windowTitle("Vivecraft API")
+        title = "Vivecraft API"
+        options.locale("en_US")
+        // also force en_us for the java runtime, because of a java bug
+        options.jFlags("-Duser.country=US", "-Duser.language=en")
+    }
+
+    tasks.named('test', Test) {
+        useJUnitPlatform()
+
+        // always run tests
+        outputs.upToDateWhen { false }
+
+        testLogging {
+            events "passed"
+        }
+    }
+
+    // only do these for the api
+    if (project.name in ["fabric", "neoforge"]) {
+        tasks.register('apiJar', Jar) {
+            archiveVersion.set(rootProject.minecraft_version + "-" + rootProject.api_version)
+            dependsOn tasks.named('remapJar')
+            archiveBaseName = rootProject.mod_id + '-api'
+            if (project.name == "neoforge") {
+                archiveBaseName = rootProject.mod_id + '-api-mojmap'
+            }
+
+            from(tasks.named('remapJar').flatMap { it.archiveFile }.map { zipTree(it) }) {
+                include 'org/vivecraft/api/**'
+            }
+
+            manifest {
+                from(tasks.named('remapJar').flatMap { it.archiveFile }.map {
+                    zipTree(it).matching {
+                        include 'META-INF/MANIFEST.MF'
+                    }.singleFile
+                })
+            }
+            finalizedBy copyJarToMain
+        }
+
+        tasks.register('apiSourcesJar', Jar) {
+            archiveVersion.set(rootProject.minecraft_version + "-" + rootProject.api_version)
+            archiveClassifier.set('sources')
+            dependsOn tasks.named('remapSourcesJar')
+            archiveBaseName = rootProject.mod_id + '-api'
+            if (project.name == "neoforge") {
+                archiveBaseName = rootProject.mod_id + '-api-mojmap'
+            }
+
+            from(tasks.named('remapSourcesJar').flatMap { it.archiveFile }.map { zipTree(it) }) {
+                include 'org/vivecraft/api/**'
+            }
+
+            manifest {
+                from(tasks.named('remapSourcesJar').flatMap { it.archiveFile }.map {
+                    zipTree(it).matching {
+                        include 'META-INF/MANIFEST.MF'
+                    }.singleFile
+                })
+            }
+            finalizedBy copyJarToMain
+        }
+
+        tasks.register('buildApi', Task) {
+            dependsOn tasks.named('apiJar')
+            dependsOn tasks.named('apiSourcesJar')
+        }
+    }
+
+
+    if (!(project.name in ["stubs"])) {
+        apply plugin: "maven-publish"
+
+        publishing {
+            publications {
+                Mod(MavenPublication) {
+                    groupId = 'org.vivecraft'
+                    artifactId = rootProject.mod_id + "-" + project.name
+                    from components.java
+                }
+
+                if (project.name in ["fabric", "neoforge"]) {
+                    Api(MavenPublication) {
+                        version = rootProject.minecraft_version + "-" + rootProject.api_version
+                        groupId = 'org.vivecraft'
+
+                        artifactId = rootProject.mod_id + '-api'
+                        if (project.name == "neoforge") {
+                            artifactId += '-mojmap'
+                        }
+
+                        artifact(tasks.named('apiJar'))
+                        artifact(tasks.named('apiSourcesJar'))
+                    }
+                }
+            }
+
+//            repositories {
+//                maven {
+//                    name = "github-packages"
+//                    var repoUrl = System.getenv("TARGET_REPOSITORY")
+//                    url = uri("https://maven.pkg.github.com/" + (repoUrl != null ? repoUrl : "").toLowerCase())
+//                    credentials {
+//                        username = System.getenv("GITHUB_ACTOR")
+//                        password = System.getenv("GITHUB_TOKEN")
+//                    }
+//                }
+//            }
+        }
+    }
 }
 
 allprojects {
     apply plugin: "architectury-plugin"
-    apply plugin: "maven-publish"
 
     repositories {
         // Add repositories to retrieve artifacts from in here.
@@ -144,7 +317,7 @@ allprojects {
         maven { url = "https://maven.cafeteria.dev/releases/" }
         maven { url = "https://maven.gegy.dev" }
         maven { url = "https://modmaven.dev" }
-        maven { url = "https://maven.minecraftforge.net/"}
+        maven { url = "https://maven.minecraftforge.net/" }
         exclusiveContent {
             forRepository {
                 maven {

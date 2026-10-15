@@ -7,11 +7,19 @@ import com.electronwill.nightconfig.core.file.CommentedFileConfig;
 import net.minecraft.ResourceLocationException;
 import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import org.vivecraft.client.Xplat;
+import org.vivecraft.Xloader;
+import org.vivecraft.client.utils.UpdateChecker;
+import org.vivecraft.common.network.packet.s2c.AttackWhileBlockingPayloadS2C;
+import org.vivecraft.common.network.packet.s2c.CrawlPayloadS2C;
+import org.vivecraft.common.network.packet.s2c.DualWieldingPayloadS2C;
+import org.vivecraft.common.network.packet.s2c.TeleportPayloadS2C;
 import org.vivecraft.server.ServerNetworking;
+import org.vivecraft.server.config.enums.ClimbeyBlockmode;
+import org.vivecraft.server.config.enums.HeadshotIndicator;
 
 import java.util.Arrays;
 import java.util.List;
@@ -19,6 +27,7 @@ import java.util.List;
 public class ServerConfig {
 
     // config keys
+    // general
     public static ConfigBuilder.BooleanValue DEBUG;
     public static ConfigBuilder.BooleanValue DEBUG_PARTICLES;
     public static ConfigBuilder.BooleanValue DEBUG_PARTICLES_HEAD;
@@ -26,11 +35,15 @@ public class ServerConfig {
     public static ConfigBuilder.InListValue<String> CHECK_FOR_UPDATE_TYPE;
     public static ConfigBuilder.BooleanValue VR_ONLY;
     public static ConfigBuilder.BooleanValue VIVE_ONLY;
+    public static ConfigBuilder.StringValue MIN_VIVE_VERSION_STRING;
+    public static UpdateChecker.Version MIN_VIVE_VERSION = UpdateChecker.Version.UNKNOWN;
     public static ConfigBuilder.BooleanValue ALLOW_OP;
     public static ConfigBuilder.DoubleValue MESSAGE_KICK_DELAY;
     public static ConfigBuilder.BooleanValue VR_FUN;
     public static ConfigBuilder.BooleanValue SEND_DATA_TO_OWNER;
+    public static ConfigBuilder.BooleanValue KICK_PLAYERS_ON_SETTING_UPDATE;
 
+    // messages
     public static ConfigBuilder.BooleanValue MESSAGES_ENABLED;
     public static ConfigBuilder.StringValue MESSAGES_WELCOME_VR;
     public static ConfigBuilder.StringValue MESSAGES_WELCOME_NONVR;
@@ -47,17 +60,28 @@ public class ServerConfig {
     public static ConfigBuilder.StringValue MESSAGES_LEAVE_MESSAGE;
     public static ConfigBuilder.StringValue MESSAGES_KICK_VIVE_ONLY;
     public static ConfigBuilder.StringValue MESSAGES_KICK_VR_ONLY;
+    public static ConfigBuilder.StringValue MESSAGES_KICK_OUTDATED_VIVE_VERSION;
 
+    // vrChanges
     public static ConfigBuilder.BooleanValue DUAL_WIELDING;
     public static ConfigBuilder.DoubleValue BOOTS_ARMOR_DAMAGE;
     public static ConfigBuilder.DoubleValue CREEPER_SWELL_DISTANCE;
+    public static ConfigBuilder.DoubleValue MOB_ATTACK_RANGE_ADJUSTMENT;
     public static ConfigBuilder.DoubleValue PROJECTILE_INACCURACY_MULTIPLIER;
+    public static ConfigBuilder.BooleanValue ALLOW_FASTER_BLOCK_BREAKING;
+    public static ConfigBuilder.BooleanValue ALLOW_ROOMSCALE_SHIELD_BLOCKING;
+    public static ConfigBuilder.IntValue ROOMSCALE_SHIELD_COOLDOWN;
+    public static ConfigBuilder.DoubleValue ROOMSCALE_SHIELD_COOLDOWN_DAMAGE_TRIGGER;
+    public static ConfigBuilder.BooleanValue ALLOW_ATTACKS_WHILE_BLOCKING;
+    // bow
     public static ConfigBuilder.DoubleValue BOW_STANDING_MULTIPLIER;
     public static ConfigBuilder.DoubleValue BOW_SEATED_MULTIPLIER;
     public static ConfigBuilder.DoubleValue BOW_STANDING_HEADSHOT_MULTIPLIER;
     public static ConfigBuilder.DoubleValue BOW_SEATED_HEADSHOT_MULTIPLIER;
     public static ConfigBuilder.DoubleValue BOW_VANILLA_HEADSHOT_MULTIPLIER;
+    public static ConfigBuilder.EnumValue<HeadshotIndicator> BOW_HEADSHOT_INDICATOR;
 
+    // pvp
     public static ConfigBuilder.BooleanValue PVP_VR_VS_VR;
     public static ConfigBuilder.BooleanValue PVP_SEATEDVR_VS_SEATEDVR;
     public static ConfigBuilder.BooleanValue PVP_VR_VS_NONVR;
@@ -65,25 +89,33 @@ public class ServerConfig {
     public static ConfigBuilder.BooleanValue PVP_VR_VS_SEATEDVR;
     public static ConfigBuilder.BooleanValue PVP_NOTIFY_BLOCKED_DAMAGE;
 
+    // climbey
     public static ConfigBuilder.BooleanValue CLIMBEY_ENABLED;
+    public static ConfigBuilder.BooleanValue CLIMBEY_FOOD_EXHAUSTION;
     public static ConfigBuilder.EnumValue<ClimbeyBlockmode> CLIMBEY_BLOCKMODE;
     public static ConfigBuilder.ListValue<String> CLIMBEY_BLOCKLIST;
 
+    // crawling
     public static ConfigBuilder.BooleanValue CRAWLING_ENABLED;
 
+    // teleport
     public static ConfigBuilder.BooleanValue TELEPORT_ENABLED;
+    public static ConfigBuilder.BooleanValue TELEPORT_FOOD_EXHAUSTION;
     public static ConfigBuilder.BooleanValue TELEPORT_LIMITED_SURVIVAL;
     public static ConfigBuilder.IntValue TELEPORT_UP_LIMIT;
     public static ConfigBuilder.IntValue TELEPORT_DOWN_LIMIT;
     public static ConfigBuilder.IntValue TELEPORT_HORIZONTAL_LIMIT;
 
+    // worldscale
     public static ConfigBuilder.BooleanValue WORLDSCALE_LIMITED;
     public static ConfigBuilder.DoubleValue WORLDSCALE_MAX;
     public static ConfigBuilder.DoubleValue WORLDSCALE_MIN;
 
+    // settingOverrides
     public static ConfigBuilder.BooleanValue FORCE_THIRD_PERSON_ITEMS;
     public static ConfigBuilder.BooleanValue FORCE_THIRD_PERSON_ITEMS_CUSTOM;
 
+    // vr switching
     public static ConfigBuilder.BooleanValue VR_SWITCHING_ENABLED;
 
     private static CommentedFileConfig CONFIG;
@@ -95,8 +127,12 @@ public class ServerConfig {
 
     public static void init(ConfigSpec.CorrectionListener listener) {
         Config.setInsertionOrderPreserved(true);
+        if (CONFIG != null) {
+            // make sure to close the old one when reloading
+            CONFIG.close();
+        }
         CONFIG = CommentedFileConfig
-            .builder(Xplat.getConfigPath("vivecraft-server-config.toml"))
+            .builder(Xloader.getConfigPath("vivecraft-server-config.toml"))
             .autosave()
             .sync()
             .concurrent()
@@ -127,215 +163,220 @@ public class ServerConfig {
             .push("general");
         DEBUG = BUILDER
             .push("debug")
-            .comment("will print clients that connect with vivecraft, and what version they are using, to the log.")
             .define(false);
         CHECK_FOR_UPDATES = BUILDER
             .push("checkForUpdate")
-            .comment("will check for a newer version and alert any OP when they login to the server.")
             .define(true);
         CHECK_FOR_UPDATE_TYPE = BUILDER
             .push("checkForUpdateType")
-            .comment("What updates to check for.\n r: Release, b: Beta, a: Alpha")
             .defineInList("r", Arrays.asList("r", "b", "a"));
         VR_ONLY = BUILDER
             .push("vr_only")
-            .comment(
-                "Set to true to only allow VR players to play.\n If enabled, VR hotswitching will be automatically disabled.")
-            .define(false);
+            .define(false)
+            .setOnUpdate(ServerNetworking::updateViveVROnly);
         VIVE_ONLY = BUILDER
             .push("vive_only")
-            .comment("Set to true to only allow vivecraft players to play.")
-            .define(false);
+            .define(false)
+            .setOnUpdate(ServerNetworking::updateViveVROnly);
+        MIN_VIVE_VERSION_STRING = BUILDER
+            .push("minViveVersion")
+            .define("")
+            .setOnUpdate((server, notifier) -> {
+                MIN_VIVE_VERSION = MIN_VIVE_VERSION_STRING.get().isEmpty() ? UpdateChecker.Version.UNKNOWN :
+                    UpdateChecker.Version.fromClient(MIN_VIVE_VERSION_STRING.get());
+                if (!MIN_VIVE_VERSION_STRING.get().isEmpty() && !MIN_VIVE_VERSION.isValid()) {
+                    if (notifier != null) {
+                        notifier.accept(Component.literal(
+                            "Invalid minViveVersion version number: '" + MIN_VIVE_VERSION_STRING.get() +
+                                "'. Version numbers need to be of the format X.X.X"));
+                    }
+                    return;
+                }
+                ServerNetworking.updateViveVROnly(server, notifier);
+            });
         ALLOW_OP = BUILDER
             .push("allow_op")
-            .comment("If true, will allow server ops to be in any mode. No effect if vive-only/vr-only is false.")
-            .define(true);
+            .define(true)
+            .setOnUpdate(ServerNetworking::updateViveVROnly);
         MESSAGE_KICK_DELAY = BUILDER
             .push("messageAndKickDelay")
-            .comment(
-                "Seconds to wait before kicking a player or sending welcome messages. The player's client must send a Vivecraft VERSION info in that time.")
             .defineInRange(10.0, 0.0, 100.0);
         VR_FUN = BUILDER
             .push("vrFun")
-            .comment("Gives VR Players fun cakes and drinks at random, when they respawn.")
             .define(true);
         SEND_DATA_TO_OWNER = BUILDER
             .push("sendDataToOwner")
-            .comment(
-                "Sends the player position data also back to the player that sent it, usually not needed.\n Enable this to when using replay mod or something similar.")
+            .define(false);
+        KICK_PLAYERS_ON_SETTING_UPDATE = BUILDER
+            .push("kickPlayersOnSettingUpdate")
             .define(false);
         // end general
         BUILDER.pop();
 
         BUILDER
-            .push("messages");
+            .push("messages", true);
         MESSAGES_ENABLED = BUILDER
             .push("enabled")
-            .comment("Enable or disable all messages.")
             .define(false);
 
         // welcome messages
         MESSAGES_WELCOME_VR = BUILDER
             .push("welcomeVR")
-            .comment(
-                "set message to nothing to not send. ex: leaveMessage = \"\"\n put '%s' in any message for the player name")
-            .define("%s has joined with standing VR!");
+            .define("&player has joined with standing VR!");
         MESSAGES_WELCOME_NONVR = BUILDER
             .push("welcomeNonVR")
-            .define("%s has joined with Non-VR companion!");
+            .define("&player has joined with Non-VR companion!");
         MESSAGES_WELCOME_SEATED = BUILDER
             .push("welcomeSeated")
-            .define("%s has joined with seated VR!");
-
-        MESSAGES_LEAVE_MESSAGE = BUILDER
-            .push("leaveMessage")
-            .define("%s has disconnected from the server!");
-
-        // general death messages
+            .define("&player has joined with seated VR!");
         MESSAGES_WELCOME_VANILLA = BUILDER
             .push("welcomeVanilla")
-            .define("%s has joined as a Muggle!");
+            .define("&player has joined as a Muggle!");
 
         MESSAGES_LEAVE_MESSAGE = BUILDER
             .push("leaveMessage")
-            .define("%s has disconnected from the server!");
+            .define("&player has disconnected from the server!");
 
         // general death messages
         MESSAGES_DEATH_VR = BUILDER
             .push("deathVR")
-            .define("%s died in standing VR!");
+            .define("&player died in standing VR!");
         MESSAGES_DEATH_NONVR = BUILDER
             .push("deathNonVR")
-            .define("%s died in Non-VR companion!");
+            .define("&player died in Non-VR companion!");
         MESSAGES_DEATH_SEATED = BUILDER
             .push("deathSeated")
-            .define("%s died in seated VR!");
+            .define("&player died in seated VR!");
         MESSAGES_DEATH_VANILLA = BUILDER
             .push("deathVanilla")
-            .define("%s died as a Muggle!");
+            .define("&player died as a Muggle!");
 
         // death messages by mobs
         MESSAGES_DEATH_BY_MOB_VR = BUILDER
             .push("deathByMobVR")
-            .comment("death by mob messages use '%1$s' for the player name and '%2$s' for the mob name")
-            .define("%1$s was slain by %2$s in standing VR!");
+            .define("&player was slain by &cause in standing VR!");
         MESSAGES_DEATH_BY_MOB_NONVR = BUILDER
             .push("deathByMobNonVR")
-            .define("%1$s was slain by %2$s in Non-VR companion!");
+            .define("&player was slain by &cause in Non-VR companion!");
         MESSAGES_DEATH_BY_MOB_SEATED = BUILDER
             .push("deathByMobSeated")
-            .define("%1$s was slain by %2$s in seated VR!");
+            .define("&player was slain by &cause in seated VR!");
         MESSAGES_DEATH_BY_MOB_VANILLA = BUILDER
             .push("deathByMobVanilla")
-            .define("%1$s was slain by %2$s as a Muggle!");
+            .define("&player was slain by &cause as a Muggle!");
 
         // kick messages
         MESSAGES_KICK_VIVE_ONLY = BUILDER
             .push("KickViveOnly")
-            .comment("The message to show kicked non vivecraft players.")
             .define("This server is configured for Vivecraft players only.");
         MESSAGES_KICK_VR_ONLY = BUILDER
             .push("KickVROnly")
-            .comment("The message to show kicked non VR players.")
             .define("This server is configured for VR players only.");
+        MESSAGES_KICK_OUTDATED_VIVE_VERSION = BUILDER
+            .push("KickOutdatedViveVersion")
+            .define(
+                "This server is configured to only allow Vivecraft '&minVersion' and newer. You are using Vivecraft '&userVersion'");
         // end messages
         BUILDER.pop();
 
         BUILDER
-            .push("vrChanges")
-            .comment("Vanilla modifications for VR players");
+            .push("vrChanges");
         CREEPER_SWELL_DISTANCE = BUILDER
             .push("creeperSwellDistance")
-            .comment("Distance at which creepers swell and explode for VR players. Vanilla: 3")
             .defineInRange(1.75, 0.1, 10.0);
+        MOB_ATTACK_RANGE_ADJUSTMENT = BUILDER
+            .push("mobAttackRangeAdjustment")
+            .defineInRange(-0.4, -0.7, 0.0);
         DUAL_WIELDING = BUILDER
             .push("dualWielding")
-            .comment("Allows vr players to hit with their offhand items")
-            .define(true);
+            .define(true)
+            .setPacketFunction(v -> new DualWieldingPayloadS2C(DUAL_WIELDING.get()));
         BOOTS_ARMOR_DAMAGE = BUILDER
             .push("bootsArmorDamage")
-            .comment(
-                "Melee damage addition for Vivecraft users when hitting with their feet.\n This scales with the armor attribute of the boots, doing 1 additional damage per Armor level, times the set multiplier\n Set to 0.0 to disable")
             .defineInRange(0.0, 0.0, 5.0);
         PROJECTILE_INACCURACY_MULTIPLIER = BUILDER
             .push("projectileInaccuracyMultiplier")
-            .comment(
-                "Projectiles by default have an inaccuracy to not shoot in the same direction all the time.\n With this, the inaccuracy can be adjusted for VR players.\n 1.0 is equal to vanilla, 0.0 is no inaccuracy at all.")
             .defineInRange(1.0, 0.0, 1.0);
+        ALLOW_FASTER_BLOCK_BREAKING = BUILDER
+            .push("allowFasterBlockBreaking")
+            .define(true);
+        ALLOW_ROOMSCALE_SHIELD_BLOCKING = BUILDER
+            .push("allowRoomscaleShieldBlocking")
+            .define(true);
+        ROOMSCALE_SHIELD_COOLDOWN = BUILDER
+            .push("roomscaleShieldCooldown")
+            .defineInRange(0, 0, 1000);
+        ROOMSCALE_SHIELD_COOLDOWN_DAMAGE_TRIGGER = BUILDER
+            .push("roomscaleShieldCooldownDamageTrigger")
+            .defineInRange(3.0, 0.0, 100.0);
+        ALLOW_ATTACKS_WHILE_BLOCKING = BUILDER
+            .push("allowAttacksWhileBlocking")
+            .define(true)
+            .setPacketFunction(v -> new AttackWhileBlockingPayloadS2C(ALLOW_ATTACKS_WHILE_BLOCKING.get()));
 
         BUILDER
-            .push("bow")
-            .comment("Bow damage adjustments");
+            .push("bow");
         BOW_STANDING_MULTIPLIER = BUILDER
             .push("standingMultiplier")
-            .comment("Archery damage multiplier for Vivecraft (standing) users. Set to 1.0 to disable")
             .defineInRange(2.0, 1.0, 10.0);
         BOW_SEATED_MULTIPLIER = BUILDER
             .push("seatedMultiplier")
-            .comment("Archery damage multiplier for Vivecraft (seated) users. Set to 1.0 to disable")
             .defineInRange(1.0, 1.0, 10.0);
         BOW_STANDING_HEADSHOT_MULTIPLIER = BUILDER
             .push("standingHeadshotMultiplier")
-            .comment("Headshot damage multiplier for Vivecraft (standing) users. Set to 1.0 to disable")
             .defineInRange(3.0, 1.0, 10.0);
         BOW_SEATED_HEADSHOT_MULTIPLIER = BUILDER
             .push("seatedHeadshotMultiplier")
-            .comment("Headshot damage multiplier for Vivecraft (seated) users. Set to 1.0 to disable")
             .defineInRange(2.0, 1.0, 10.0);
         BOW_VANILLA_HEADSHOT_MULTIPLIER = BUILDER
             .push("vanillaHeadshotMultiplier")
-            .comment("Headshot damage multiplier for Vanilla/NonVR users. Set to 1.0 to disable")
             .defineInRange(1.0, 1.0, 10.0);
+        BOW_HEADSHOT_INDICATOR = BUILDER
+            .push("headshotIndicator")
+            .defineEnum(HeadshotIndicator.BOTH, HeadshotIndicator.class);
         // end bow
         BUILDER.pop();
         // end vrChanges
         BUILDER.pop();
 
         BUILDER
-            .push("pvp")
-            .comment("VR vs. non-VR vs. seated player PVP settings");
+            .push("pvp");
         PVP_NOTIFY_BLOCKED_DAMAGE = BUILDER
             .push("notifyBlockedDamage")
-            .comment("Notifies the player that would cause damage, that it was blocked.")
             .define(false);
         PVP_VR_VS_VR = BUILDER
             .push("VRvsVR")
-            .comment("Allows Standing VR players to damage each other.")
             .define(true);
         PVP_SEATEDVR_VS_SEATEDVR = BUILDER
             .push("SEATEDVRvsSEATEDVR")
-            .comment("Allows Seated VR players to damage each other.")
             .define(true);
         PVP_VR_VS_NONVR = BUILDER
             .push("VRvsNONVR")
-            .comment("Allows Standing VR players and Non VR players to damage each other.")
             .define(true);
         PVP_SEATEDVR_VS_NONVR = BUILDER
             .push("SEATEDVRvsNONVR")
-            .comment("Allows Seated VR players and Non VR players to damage each other.")
             .define(true);
         PVP_VR_VS_SEATEDVR = BUILDER
             .push("VRvsSEATEDVR")
-            .comment("Allows Standing VR players and Seated VR Players to damage each other.")
             .define(true);
         // end pvp
         BUILDER.pop();
 
         BUILDER
-            .push("climbey")
-            .comment("Climbey motion settings");
+            .push("climbey");
         CLIMBEY_ENABLED = BUILDER
             .push("enabled")
-            .comment("Allows use of jump_boots and climb_claws.")
+            .define(true)
+            .setPacketFunction(v -> ServerNetworking.getClimbeyServerPayload());
+        CLIMBEY_FOOD_EXHAUSTION = BUILDER
+            .push("foodExhaustion")
             .define(true);
         CLIMBEY_BLOCKMODE = BUILDER
             .push("blockmode")
-            .comment(
-                "Sets which blocks are climb-able. Options are:\n \"DISABLED\" = List ignored. All blocks are climbable.\n \"WHITELIST\" = Only blocks on the list are climbable.\n \"BLACKLIST\" = All blocks are climbable except those on the list")
-            .defineEnum(ClimbeyBlockmode.DISABLED, ClimbeyBlockmode.class);
+            .defineEnum(ClimbeyBlockmode.DISABLED, ClimbeyBlockmode.class)
+            .setPacketFunction(v -> ServerNetworking.getClimbeyServerPayload());
         CLIMBEY_BLOCKLIST = BUILDER
             .push("blocklist")
-            .comment("The list of block names for use with include/exclude block mode.")
             .defineList(Arrays.asList("white_wool", "dirt", "grass_block"), (s) -> {
                 boolean valid = true;
                 try {
@@ -354,87 +395,85 @@ public class ServerConfig {
                 }
                 // return true or the whole list would be reset
                 return true;
-            });
+            })
+            .setPacketFunction(v -> ServerNetworking.getClimbeyServerPayload());
         // end climbey
         BUILDER.pop();
 
         BUILDER
-            .push("crawling")
-            .comment("Roomscale crawling settings");
-        CRAWLING_ENABLED = BUILDER.
-            push("enabled")
-            .comment("Allows use of roomscale crawling. Disabling does not prevent vanilla crawling.")
-            .define(true);
+            .push("crawling");
+        CRAWLING_ENABLED = BUILDER
+            .push("enabled")
+            .define(true)
+            .setOnUpdate(ServerNetworking::updateCrawling)
+            .setPacketFunction(v -> new CrawlPayloadS2C(ServerConfig.CRAWLING_ENABLED.get(), v.networkVersion));
         // end crawling
         BUILDER.pop();
 
         BUILDER
-            .push("teleport")
-            .comment("Teleport settings");
+            .push("teleport");
         TELEPORT_ENABLED = BUILDER
             .push("enabled")
-            .comment(
-                "Whether direct teleport is enabled. It is recommended to leave this enabled for players prone to VR sickness.")
-            .define(true);
+            .define(true)
+            .setPacketFunction(v -> new TeleportPayloadS2C(ServerConfig.TELEPORT_ENABLED.get(), v.networkVersion));
+        TELEPORT_FOOD_EXHAUSTION = BUILDER
+            .push("foodExhaustion")
+            .define(false);
         TELEPORT_LIMITED_SURVIVAL = BUILDER
             .push("limitedSurvival")
-            .comment("Enforce limited teleport range and frequency in survival.")
-            .define(false);
+            .define(false)
+            .setPacketFunction(v -> ServerNetworking.getSurvivalTeleportOverridePayload());
         TELEPORT_UP_LIMIT = BUILDER
             .push("upLimit")
-            .comment("Maximum blocks players can teleport up. Set to 0 to disable.")
-            .defineInRange(4, 1, 16);
+            .defineInRange(4, 1, 16)
+            .setPacketFunction(v -> ServerNetworking.getSurvivalTeleportOverridePayload());
         TELEPORT_DOWN_LIMIT = BUILDER
             .push("downLimit")
-            .comment("Maximum blocks players can teleport down. Set to 0 to disable.")
-            .defineInRange(4, 1, 16);
+            .defineInRange(4, 1, 16)
+            .setPacketFunction(v -> ServerNetworking.getSurvivalTeleportOverridePayload());
         TELEPORT_HORIZONTAL_LIMIT = BUILDER
             .push("horizontalLimit")
-            .comment("Maximum blocks players can teleport horizontally. Set to 0 to disable.")
-            .defineInRange(16, 1, 32);
+            .defineInRange(16, 1, 32)
+            .setPacketFunction(v -> ServerNetworking.getSurvivalTeleportOverridePayload());
         // end teleport
         BUILDER.pop();
 
         BUILDER
-            .push("worldScale")
-            .comment("World scale settings");
+            .push("worldScale");
         WORLDSCALE_LIMITED = BUILDER
             .push("limitRange")
-            .comment("Limit the range of world scale players can use")
-            .define(false);
+            .define(false)
+            .setPacketFunction(v -> ServerNetworking.getWorldScaleOverridePayload());
         WORLDSCALE_MIN = BUILDER
             .push("min")
-            .comment("Lower limit of range")
-            .defineInRange(0.5, 0.1, 100.0);
+            .defineInRange(0.5, 0.1, 100.0)
+            .setPacketFunction(v -> ServerNetworking.getWorldScaleOverridePayload());
         WORLDSCALE_MAX = BUILDER
             .push("max")
-            .comment("Upper limit of range")
-            .defineInRange(2.0, 0.1, 100.0);
+            .defineInRange(2.0, 0.1, 100.0)
+            .setPacketFunction(v -> ServerNetworking.getWorldScaleOverridePayload());
         // end worldScale
         BUILDER.pop();
 
         BUILDER
-            .push("settingOverrides")
-            .comment("Other client settings to override");
+            .push("settingOverrides");
         FORCE_THIRD_PERSON_ITEMS = BUILDER
             .push("thirdPersonItems")
-            .comment("Forces players to use the raw item position setting")
-            .define(false);
+            .define(false)
+            .setPacketFunction(v -> ServerNetworking.getThirdPersonItemsOverridePayload());
         FORCE_THIRD_PERSON_ITEMS_CUSTOM = BUILDER
             .push("thirdPersonItemsCustom")
-            .comment("Forces players to use the raw item position setting, only for items with custom model data")
-            .define(false);
+            .define(false)
+            .setPacketFunction(v -> ServerNetworking.getThirdPersonItemsCustomOverridePayload());
         // end settingOverrides
         BUILDER.pop();
 
         BUILDER
-            .push("vrSwitching")
-            .comment("VR hotswitch settings");
+            .push("vrSwitching");
         VR_SWITCHING_ENABLED = BUILDER
             .push("enabled")
-            .comment(
-                "Allows players to switch between VR and NONVR on the fly.\n If disabled, they will be locked to the mode they joined with.")
-            .define(true);
+            .define(true)
+            .setPacketFunction(v -> ServerNetworking.getVRSwitchingPayload());
         // end vrSwitching
         BUILDER.pop();
 
@@ -442,11 +481,9 @@ public class ServerConfig {
             .push("debug");
         DEBUG_PARTICLES = BUILDER
             .push("debugParticles")
-            .comment("will spawn particles at VR players device positions, to indicate the server VR data state.")
             .define(false);
         DEBUG_PARTICLES_HEAD = BUILDER
             .push("debugParticlesHead")
-            .comment("will spawn particles at VR players head position, to indicate the server VR data state.")
             .define(false);
         BUILDER.pop();
 
@@ -459,5 +496,9 @@ public class ServerConfig {
 
         // if the config is outdated, or is missing keys, re add them
         BUILDER.correct(listener);
+
+        // init the minVersion
+        MIN_VIVE_VERSION = MIN_VIVE_VERSION_STRING.get().isEmpty() ? UpdateChecker.Version.UNKNOWN :
+            UpdateChecker.Version.fromClient(MIN_VIVE_VERSION_STRING.get());
     }
 }
