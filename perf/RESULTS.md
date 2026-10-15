@@ -51,6 +51,46 @@ evidence for the headset (CLAUDE.md rule 6).
   suffix (background thread, harmless); upstream's `vivecraft:core/blit_vr` shader file is missing (used
   only by the desktop mirror, which QuestCraft turns off); one `ModelViewStack was empty!`.
 
+### R1 — CI desktop smoke, mihail.3: fixes off / on / on + ImmersiveMC (2026-10-15)
+
+**Not a headset result.** Same harness as R0 (GitHub Actions, Xvfb + Mesa software GL, `NULLVR`, vanilla
+flat world, 60 s after joining), now with Sodium 0.6.13 really loaded. One run per variant.
+
+- **Build tag:** `1.3.15-mihail.3` (commit `6aef7234`, branch `integration/mihail.3`, Actions run `38765161759`)
+- **Variants:** fixes-off = every perf toggle off; fixes-on = PLAN defaults (all on, incl. `sharedEyeCulling`,
+  `xrPerfHints`); fixes-on-immersivemc = fixes-on plus ImmersiveMC `1.6.0-beta1+claudecraft.3` in `mods/`.
+- **JVM:** as R0 (off: ZGC `-Xms1024m -Xmx2048m`; on: the claudecraft policy, `-Xms512m`, SoftMax 1536 MB).
+
+| `[VCPERF] mem` label | Off: heap used / committed, VmRSS | On | On + ImmersiveMC |
+|---|---|---|---|
+| vr_init | 1350 / 2048, 3025 | 1388 / 2048, 2886 | 1814 / 2048, 2792 |
+| join | 1644 / 2048, 3188 | 1762 / 2028, 3016 | 2016 / 2048, 3133 |
+| join+60s | 1696 / 2048, 3350 | 1198 / 1434, 2648 | 1386 / 1434, 2691 |
+| peak RSS / PSS (2 s samples) | 3350 / 3309 | 3145 / 3104 | 3203 / 3163 |
+
+**`[VCPERF] cull`, second 30 s window (steady state), Sodium `setupTerrain` time per eye pass:**
+
+| | First eye | Second eye | Frames shared / per eye | Fallbacks |
+|---|---|---|---|---|
+| Off | 0.197 ms × 260 | 0.217 ms × 260 | 0 / 0 (feature off) | – |
+| On | 0.190 ms × 283 | skipped (283 of 283) | 283 / 0 | none |
+| On + ImmersiveMC | 0.201 ms × 389 | skipped (389 of 389) | 389 / 0 | none |
+
+- **Shared eye culling worked in CI:** the Sodium hook matched 0.6.13 (`sodiumHook=true`), every frame was
+  shared, nothing fell back, and the apex sat 3.4 cm behind the eyes. The right eye's culling work
+  (~0.2 ms per frame here) disappeared. A flat world at desktop speed is the smallest possible case;
+  the headset's CPU and real terrain are where it should matter.
+- **Memory:** fixes-on ends 700 MB lower at join+60s than fixes-off (same pattern as R0: ZGC returns
+  ~600 MB of committed heap). ImmersiveMC adds ~40 MB RSS at join+60s, within the ~200 MB run-to-run noise.
+- **Crashed:** no (all three).
+- **Open issue:** the ImmersiveMC run logs `IllegalArgumentException: InteractModule 'immersivemc:bag_open' is
+  already added`. The game continued. Vivecraft fires its registration event once and ImmersiveMC adds
+  its handler once, so the duplicate's source is unknown. CI now prints the stack (`perf/immersivemc`
+  `7461fc6a`). If the second call is real on the headset, the backpack and chest-lid interactions may
+  not register (TEST-SESSION-3 step 4 checks).
+- Other errors as in R0 (update-check version parse, missing upstream `blit_vr` shader, `ModelViewStack
+  was empty!`).
+
 <!-- TEMPLATE
 
 ### R<N> — <short label> (<YYYY-MM-DD>)
