@@ -81,12 +81,72 @@ jobs:
           path: ${{ steps.meta.outputs.jar }}
           if-no-files-found: error
 
+  # ImmersiveMC (immersivemc/, vendored) for Fabric, compiled against the Vivecraft jar built above; the APK bundles it.
+  immersivemc:
+    needs: vivecraft
+    runs-on: ubuntu-latest
+    outputs:
+      mod_version: ${{ steps.meta.outputs.mod_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-cleanup: never
+          add-job-summary: never
+      - uses: actions/download-artifact@v4
+        with:
+          name: vivecraft-jar
+          path: vcjar
+      - name: Build Fabric jar against our Vivecraft
+        working-directory: immersivemc
+        run: |
+          set -o pipefail
+          vc=$(ls "$GITHUB_WORKSPACE"/vcjar/*.jar | head -1)
+          echo "Vivecraft: $vc"
+          bash ./gradlew :fabric:build --no-daemon -Pvivecraft_jar="$vc" 2>&1 | tee ../build.log || {
+            echo "=== BUILD ERRORS ==="
+            grep -E '\.java:[0-9]+: error:|^e: |What went wrong|Could not (resolve|find)' -A3 ../build.log | grep -v -E '^\s+at ' | head -200
+            exit 1
+          }
+      - name: Locate jar
+        id: meta
+        run: |
+          v=$(grep '^mod_version=' immersivemc/gradle.properties | cut -d= -f2)
+          jar=$(ls immersivemc/fabric/build/libs/*.jar | grep -v -E -- '-(sources|dev|dev-shadow)\.jar$' | head -1)
+          echo "mod_version=$v" >> "$GITHUB_OUTPUT"
+          echo "jar=$jar" >> "$GITHUB_OUTPUT"
+          mkdir -p report
+          {
+            echo "immersivemc_version=$v"
+            echo "immersivemc_jar=$(basename "$jar") $(stat -c %s "$jar") bytes"
+            echo "immersivemc_depends=$(unzip -p "$jar" fabric.mod.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("depends"))')"
+            echo "immersivemc_nested=$(unzip -Z1 "$jar" 'META-INF/jars/*' 2>/dev/null | tr '\n' ' ')"
+            echo "immersivemc_manifest_mc=$(unzip -p "$jar" META-INF/MANIFEST.MF | tr -d '\r' | sed -n 's/^Fabric-Minecraft-Version: //p')"
+          } | tee report/immersivemc.txt
+          { echo "### ImmersiveMC \`$v\`"; echo '```'; cat report/immersivemc.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report-immersivemc
+          path: report/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: immersivemc-jar
+          path: ${{ steps.meta.outputs.jar }}
+          if-no-files-found: error
+
   # Launches the dev client (Fabric + Sodium + our Vivecraft) under Xvfb with software GL, VR on via the
   # headset-less NULLVR provider, quick-plays into a flat world, and fails on crashes or mixin errors.
   # Desktop GL, not the headset's GL ES/OpenXR path: it proves startup, VR init, menu world and a world
   # join, not headset behaviour.
   smoke:
     name: smoke (${{ matrix.variant }})
+    needs: immersivemc
+    # the two variants without ImmersiveMC run even when its build failed
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -94,7 +154,9 @@ jobs:
       matrix:
         # fixes-on: our defaults and our launcher's JVM heap policy.
         # fixes-off: every claudecraft toggle off (= the original Vivecraft code paths) and QuestCraft-like JVM flags.
-        variant: [fixes-on, fixes-off]
+        # fixes-on-immersivemc: fixes-on plus our ImmersiveMC jar in the dev client's mods folder (Fabric Loader
+        # remaps it from intermediary at startup).
+        variant: [fixes-on, fixes-off, fixes-on-immersivemc]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -120,6 +182,17 @@ jobs:
           test -f smoke/level.dat
           mkdir -p ../vivecraft/fabric/run/saves ../vivecraft/fabric/run/config
           cp -r smoke ../vivecraft/fabric/run/saves/smoke
+      - uses: actions/download-artifact@v4
+        if: matrix.variant == 'fixes-on-immersivemc'
+        with:
+          name: immersivemc-jar
+          path: immersivemc-jar
+      - name: ImmersiveMC into the dev client's mods folder
+        if: matrix.variant == 'fixes-on-immersivemc'
+        run: |
+          mkdir -p vivecraft/fabric/run/mods
+          cp immersivemc-jar/*.jar vivecraft/fabric/run/mods/
+          ls -l vivecraft/fabric/run/mods
       - name: Client config (VR on via NULLVR)
         working-directory: vivecraft/fabric/run
         run: |
@@ -190,6 +263,9 @@ jobs:
             grep -q '\[VCPERF\] config' "$log" || { echo "::error::no [VCPERF] config line (VR did not start?)"; fail=1; }
             grep -q 'label=join+60s' "$log" || { echo "::error::did not stay in the world for 60 s"; fail=1; }
           fi
+          if [ "${{ matrix.variant }}" = fixes-on-immersivemc ]; then
+            grep -q -E '\[VCPERF\] config .*immersivemc=[0-9]' "$log" || { echo "::error::ImmersiveMC not loaded"; fail=1; }
+          fi
           mkdir -p ../report && exec > >(tee ../report/smoke-${{ matrix.variant }}.txt) 2>&1
           echo "=== SUMMARY (smoke ${{ matrix.variant }}) ==="
           awk 'NF==3 && $2>r{r=$2} NF==3 && $3>p{p=$3} END{printf "memory: peak RSS %d MB, peak PSS %d MB, %d samples\n", r/1024, p/1024, NR}' ../report/rss-samples.txt 2>/dev/null || true
@@ -212,7 +288,7 @@ jobs:
           if-no-files-found: ignore
 
   apk:
-    needs: vivecraft
+    needs: [vivecraft, immersivemc]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -224,6 +300,10 @@ jobs:
         with:
           name: vivecraft-jar
           path: jar
+      - uses: actions/download-artifact@v4
+        with:
+          name: immersivemc-jar
+          path: imc
       - name: Tools (apktool, dex2jar)
         run: |
           mkdir -p tools-bin && cd tools-bin
@@ -254,15 +334,15 @@ jobs:
           echo "QC_APK=$apk" >> "$GITHUB_ENV"
           { echo "### QuestCraft APK"; echo "- source: $src"; echo "- file: \`$(basename "$apk")\`"; echo "- sha256: \`$(sha256sum "$apk" | cut -d' ' -f1)\`"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Build APK (replace variant)
-        run: apk/build-apk.sh --apk "$QC_APK" --jar jar/*.jar --variant replace --out out --tag "${{ needs.vivecraft.outputs.mod_version }}"
+        run: apk/build-apk.sh --apk "$QC_APK" --jar jar/*.jar --immersivemc imc/*.jar --variant replace --out out --tag "${{ needs.vivecraft.outputs.mod_version }}"
       - name: Build APK (side-by-side variant)
         continue-on-error: true
-        run: apk/build-apk.sh --apk "$QC_APK" --jar jar/*.jar --variant side --out out --tag "${{ needs.vivecraft.outputs.mod_version }}"
+        run: apk/build-apk.sh --apk "$QC_APK" --jar jar/*.jar --immersivemc imc/*.jar --variant side --out out --tag "${{ needs.vivecraft.outputs.mod_version }}"
       - name: Report
         if: always()
         run: |
           cat out/patch-report-*.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-          ls -l out jar | tee -a "$GITHUB_STEP_SUMMARY"
+          ls -l out jar imc | tee -a "$GITHUB_STEP_SUMMARY"
           echo "=== SUMMARY (apk) ==="; cat out/patch-report-replace.md 2>/dev/null; cat out/*.sha256 2>/dev/null
       - uses: actions/upload-artifact@v4
         with:
@@ -288,11 +368,11 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" --prerelease --title "$GITHUB_REF_NAME" \
             --notes "Personal sideload build. See perf/RESULTS.md and the test script in the repo." \
-            out/*.apk out/*.sha256 jar/*.jar
+            out/*.apk out/*.sha256 jar/*.jar imc/*.jar
 
   # One short block with every job's key results, so it can be read without the long job logs.
   report:
-    needs: [vivecraft, smoke, apk]
+    needs: [vivecraft, immersivemc, smoke, apk]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -309,10 +389,12 @@ jobs:
       - name: Summary
         run: |
           echo "=== REPORT ==="
-          echo "jobs: vivecraft=${{ needs.vivecraft.result }} smoke=${{ needs.smoke.result }} apk=${{ needs.apk.result }}"
+          echo "jobs: vivecraft=${{ needs.vivecraft.result }} immersivemc=${{ needs.immersivemc.result }} smoke=${{ needs.smoke.result }} apk=${{ needs.apk.result }}"
           cat r/jar-version.txt 2>/dev/null || true
+          cat r/immersivemc.txt 2>/dev/null || true
           grep -E '^- ' r/jar-compare.md 2>/dev/null | head -4 || true
           for f in s/*/report/smoke-*.txt; do sed -n '/=== SUMMARY/,/=== END SUMMARY/p' "$f" | cut -c1-400; done 2>/dev/null || echo "(no smoke summary)"
           cat r/patch-report-replace.md 2>/dev/null | head -30 || true
+          sed -n '/^## Bundled/,$p' r/patch-report-replace.md 2>/dev/null || true
           cat r/*.sha256 2>/dev/null || true
           echo "=== END REPORT ==="
