@@ -35,10 +35,19 @@ after any resume:
   - `DesktopCamera`, which `DesktopCam.cs:11` leaves active on Android;
   - the "Quester" mini-game camera, into a 600×1000 RenderTexture.
 - **`InstanceButton.Update`** polls `gameReady` over JNI every frame, forever (`InstanceButton.cs:19-35`) ✔.
-- **`LogReader`** ✔:
-  - It watches `latestlog.txt` and re-reads the *whole* file on every change (`LogReader.cs:29-66`).
-  - The game appends to that file all session, and the file has no size cap.
-  - So the IL2CPP heap grows with the log (◐) even though the log panel is hidden.
+- **`LogReader`** ✔ (`LogReader.cs:29-66`):
+  - **How it works:**
+    - A file watcher sets a flag whenever `latestlog.txt` changes.
+    - The next `Update()` reads the *whole* file into one string, assigns it to a hidden text box and calls
+      `Canvas.ForceUpdateCanvases()`.
+    - All of the JVM's stdout/stderr is appended to that file (`stdio_is.c` → `Logger.appendToLog`), with no size cap.
+  - **Cost:**
+    - Up to one full read per watcher poll (◐ about once a second while the game logs).
+    - Each read is a fresh string of about 2× the file size, in IL2CPP's non-moving heap (◐).
+  - **When it stops:**
+    - The read runs on Unity's main thread, so it stops with our pause.
+    - With `unity.pauseInGame` off (the official app), it runs all session on an ever-growing file (◐ a suspect for
+      late in-game crashes).
 - **Clock, keyboard and Quester `Update()` loops** ✔.
 - **`Microphone.Start(loop)`**, never stopped (`JNIStorage.cs:47`) ✔. Whether it keeps recording while paused is ◐.
 
