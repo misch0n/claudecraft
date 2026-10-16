@@ -67,5 +67,9 @@ Draw-call and section counts do not depend on the device, so they can be measure
 
 ## Note for the rerun
 
-The brief still names `integration/mihail.1` and the Vivecraft 1.2.5 base. The exploration branch is
-`integration/mihail.4` on Vivecraft 1.3.15, and the brief should be updated to match.
+Updated 2026-10-16. The brief now names:
+- this branch;
+- `integration/mihail.4` as the reference;
+- the Vivecraft 1.3.15 base.
+
+It also notes that mihail.4 has no headset baseline yet (`perf/TEST-SESSION-3.md` collects it).
