@@ -124,14 +124,17 @@ The Unity C# (QCXR-XR-Wrapper) is compiled to native code inside the APK, so we 
    user (what to do, for how long). After it, pull data and analyse it yourself.
 8. **Small branches:** one branch per task (`perf/<task>`), merged into `main` once measured.
    Headset test builds come from an `integration/<tag>` branch that merges the task branches.
+   Research and exploration go on `explore/<topic>` branches, which never start CI.
 9. **Privacy:** `logcat` contains the Minecraft access token (Pojlib prints the launch arguments). Never
    commit raw logs, and redact `--accessToken` in anything that leaves the machine.
 
 ## Build
 
 - **This cloud container cannot reach** Fabric, Mojang, Modrinth, jitpack or the Android SDK hosts. All
-  builds run on **GitHub Actions** (`.github/workflows/build.yml`) on every push to `main`, `perf/**` or
-  `integration/**`. Watch runs with the GitHub tools.
+  builds run on **GitHub Actions** (`.github/workflows/build.yml`) on pushes to `main`, `perf/**` or
+  `integration/**` that change `vivecraft/`, `immersivemc/`, `pojlib/`, `apk/` or the workflow itself
+  (Markdown files excluded), and on every `mihail.*` tag. Docs, `perf/` and `tools/` changes don't build;
+  start a run by hand (workflow_dispatch) when needed. Watch runs with the GitHub tools.
 - **Jar:** with network, `cd vivecraft && ./gradlew :fabric:build` (JDK **21**) →
   `vivecraft/fabric/build/libs/vivecraft-1.21.5-<mod_version>-fabric.jar`.
 - **APK:** `apk/build-apk.sh` patches the released QuestCraft APK:
