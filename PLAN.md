@@ -125,6 +125,23 @@ CPU side).
   revoke the microphone permission.
 - **ModernFix for 1.21.5:** check whether a compatible release exists, and measure it.
 - **Upstream cherry-picks:** menu world load speed-up (upstream `62535ff0`).
+- **Real-world terrain (user request, 2026-10-31):** play on an Earth-shaped world built from real
+  elevation data. Not started; propose before implementing.
+  - **Candidates found (2026-10-31), none confirmed for 1.21.5:**
+    - Earth Platform (`pirut/earth-platform`): NeoForge + a Fabric build, 1.21.1 only (alpha).
+    - Terrarium Expanded: Fabric + NeoForge, 1.21.1 (one mirror also lists 1.21.11).
+    - Terrain Diffusion MC: Fabric; versions not checked yet.
+    - TFC: Real World and RealScale Terrain: NeoForge only (TFC: Real World also needs TerraFirmaCraft).
+  - **First step:** confirm with the user which mod they mean, then check its Modrinth/CurseForge version list
+    for a Fabric 1.21.5 file.
+  - **If there is no 1.21.5 build:** porting 1.21.1 → 1.21.5 crosses four releases that changed rendering
+    and world-gen code. It is feasible for a world-gen-only mod, not for one with its own renderer (Earth
+    Platform's "far terrain").
+  - **Quest cost:** these mods fetch elevation/map tiles over the network and generate on the fly, which
+    is heavy CPU and memory on the integrated server. Plan to generate on the Mac (pregenerate with Chunky,
+    or a server on the Mac), copy the world, and keep the render distance as played.
+  - **Compatibility:** the mod must also be installed on the Quest to load the world (custom generator and
+    biomes). Check it against Sodium 0.6.13, Lithium and Vivecraft in the CI smoke run before a headset build.
 
 ## Reporting format (every checkpoint)
 
