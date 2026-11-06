@@ -1,105 +1,152 @@
-# Can we port to Minecraft 26.3? (2026-11-06)
+# Port to Minecraft 26.3 with Vulkan (2026-11-06)
 
-Short answer: **it can be done, but it is a new project, not an upgrade.** Moving from 1.21.5 to 26.3
-replaces four layers at once: the Java runtime, the window library, the LWJGL natives and the Vivecraft
-base. Today we only patch Java classes inside the released 6.0.0 APK. Nobody upstream has done the
-hardest part, the SDL3 window backend on Android. My estimate: **6–12 weeks of focused work, with a real
-chance of getting stuck on SDL3.** 26.2 is the cheaper first target (it still uses GLFW).
+**Goal:** Minecraft 26.3 on the Quest 3S, rendered through Mojang's **Vulkan** backend. Vivecraft comes
+from **upstream's 26.3 build**, with QuestCraft's Android/OpenXR layer carried on top of it. The
+launcher (Pojlib) is updated for Java 25 and for SDL3 windowing. The OpenGL + LTW path stays available
+as a fallback toggle.
 
-## What changed between 1.21.5 and 26.3
+This is an experiment. The milestones are ordered so the riskiest unknowns come first.
 
-| Change | When | Effect on us |
+## Target stack
+
+| Layer | Today (claudecraft-1) | Target |
 |---|---|---|
-| Unobfuscated jars; Fabric moved to the `net.fabricmc.fabric-loom` plugin (no mappings, no remap) | 26.1 (Mar 2026) | Every mod has to be rebuilt; nothing for 1.21.x loads. Our build needs Loom 1.15+ and Gradle 9.x. Mojang names actually make mixins easier to write. |
-| **Java 25 minimum** | 26.1 | QuestCraft ships `jre22-6.0.0`, so we need an aarch64 Android JDK 25 build. Upside: JDK 25 has compact object headers (`-XX:+UseCompactObjectHeaders`), a direct heap-memory win for our 6.3 GB limit. |
-| Vulkan renderer (opt-in) | 26.2 snapshots; default from 26.4 snapshots | 26.3 still defaults to OpenGL, so LTW keeps working. Vulkan needs 1.2 + dynamic rendering + push descriptors; the XR2 Gen 2 (Adreno 740) should support that. Longer term this could replace LTW altogether, but Vivecraft's OpenXR code uses the GLES binding. |
-| Sodium 0.9 moved all rendering onto Mojang's Blaze3D | 26.2 betas | The multi-draw → single-draw problem in LTW may change, for better or worse. We'd have to measure it again. |
-| **GLFW → SDL3** for windowing and input; LWJGL ships `lwjgl-sdl`, not `lwjgl-glfw` | 26.3 snapshot 4 (Jul 2026) | **This is the blocker.** Pojlib fakes the window with its own GLFW stub (`pojlib/jre_lwjgl3glfw`, 21 files, ~14k lines, plus native `CallbackBridge`). For 26.3 that has to be redone as an SDL3 shim on LWJGL 3.4.x. Key and mouse codes also change: SDL scancodes, and mouse buttons numbered from 1. |
+| Minecraft | 1.21.5 | 26.3 (unobfuscated) |
+| Renderer | OpenGL → LTW → GLES | **Vulkan** (Mojang's `com.mojang.renderpearl.backend.vulkan`), with OpenGL + LTW as a toggle |
+| VR mod | QuestCraft's Vivecraft 1.2.5 fork | **upstream Vivecraft `Multiloader-26.3`** (1.3.18) + our port of QuestCraft's OpenXR provider |
+| OpenXR binding | `XR_KHR_opengl_es_enable` (EGL handles from `libvloader`) | `XR_KHR_vulkan_enable` (Vulkan handles from Minecraft's device); GLES binding kept for the fallback |
+| Java | OpenJDK 22 | OpenJDK 25 |
+| Window/input | Pojlib's GLFW stub (`pojlib/jre_lwjgl3glfw`) | an SDL3 implementation (see C) |
+| Fabric | Loader 0.16.10 | Loader 0.19.5, API 0.160.4+26.3 (from upstream Vivecraft's `gradle.properties`) |
 
-## Who has already done what
+## What we found in the code
 
-- **QuestCraftPlusPlus (upstream):** nothing for 26.x. Pojlib has one branch, `QuestCraft-6.0.0`, whose
-  newest version is 1.21.5 (last commit Sep 3, 2026). Their VivecraftMod fork has only `1.21.0`.
-- **Upstream Vivecraft:** 26.1.2 builds exist (1.3.10–1.3.15), and CurseForge lists `26.3-1.3.17` (seen
-  as NeoForge; I could not confirm a Fabric jar because Modrinth is blocked from this container). It does
-  not have QuestCraft's Android OpenXR provider.
-- **`necat101/questcraft-26.2-experiment`:** a community port of the whole stack to **26.2**: Pojlib,
-  the Unity wrapper (rebuilt with Unity 2022.3.62f3), Vivecraft, JDK 25, LTW as the fallback renderer and
-  an experimental Vulkan path. It calls itself experimental, and its controller bindings are not updated.
-  This is the best reference we have, and it suggests 26.2 can be reached.
-- **SDL3 on mobile launchers:** nobody has a working version. The Amethyst-iOS effort (LWJGL 3.4.1 +
-  SDL3) never compiled, and that repo was archived on Oct 19, 2026. `glfw-restored`, a mod that puts
-  GLFW back on 26.3, is only a proof of concept: it can't attach to the window or route input.
-- **Mods we use:** Sodium has 0.9.0 betas for 26.2 but no 26.3 build that I could find. I could not check
-  Lithium, FerriteCore, ImmediatelyFast and the rest (Modrinth is unreachable from here). There is no
-  ModernFix today either, so nothing changes there.
+### Upstream Vivecraft 26.3 already supports Vulkan
 
-## The work, layer by layer
+Branch `Multiloader-26.3` @ `15a9011` (2026-11-05, "bump to 1.3.18") has Fabric, Forge and NeoForge;
+`java_version=25`, `fabric_loom=1.15-SNAPSHOT`.
 
-1. **Build pipeline (new).** We have never built native code. 26.x needs us to build, or source from
-   somewhere, a JDK 25 for Android aarch64, LWJGL 3.4.x natives (core, OpenGL/GLES, `lwjgl-sdl`), SDL3
-   for Android, and Pojlib's own `libpojavexec`/GLFW-stub replacement. That means the Android NDK in
-   GitHub Actions. Our current "patch the released APK" approach still works for the Unity layer.
-2. **Java 25 on Android.** We could reuse a JDK 25 Android build from another launcher (Mojo, Zalith,
-   PojavLauncher forks) or from the 26.2 experiment, then check it under `JLI_Launch` inside the Unity
-   process. Moderate risk.
-3. **Window and input (SDL3).** This is the critical path. There are two options:
-   - (a) implement the SDL3 functions Minecraft calls as a stub, in the same way Pojlib stubs GLFW today;
-   - (b) a Fabric mixin that sends Minecraft's window and input calls back through our existing GLFW stub
-     (the `glfw-restored` idea, but our stub needs no OS window, which makes it easier than on desktop).
+- `GraphicsHelper` picks `OpenGLHelper` or `VulkanHelper` depending on Minecraft's active backend
+  (`FrontendGpuDevice.backend` is a `GlDevice` or a `VulkanDevice`).
+- `VulkanHelper` already provides what an OpenXR Vulkan binding needs: the `VkInstance`,
+  `VkPhysicalDevice`, `VkDevice`, graphics queue and queue family pointers, plus `VkImage` handles of
+  Minecraft textures. It also has image-layout transitions and a `vkCmdBlitImage` helper, and records
+  one-off command buffers through Minecraft's command encoder.
+- Mixins on `VulkanInstance` and `VulkanBackend` add the instance and device extensions the VR runtime
+  asks for. They are stored in `VRSettings.requiredVulkanInstanceExtensions` / `...DeviceExtensions`.
+  The first run detects missing extensions, saves them and asks for a restart, because Minecraft
+  creates its Vulkan device before VR starts.
+- Only the **OpenVR** provider uses all this. Upstream has **no OpenXR provider**.
+- Upstream already moved its input code to SDL (`SDLScancode`, `SDLKeyboard`, `SDLMouse`).
 
-   (b) is likely the smaller and more rebase-friendly change, because Vivecraft owns input in VR anyway.
-   The risk is high either way; budget 2–4 weeks.
-4. **Vivecraft.** Start from upstream Vivecraft `26.3-1.3.17` (Fabric), port the QuestCraft OpenXR
-   provider onto it (`MCOpenXR`, `OpenXRStereoRenderer`, `DeviceCompat`, `VLoader`), then re-apply our
-   perf toggles (29 commits on `vivecraft/`). Note that claudecraft-2–4 already tried a 1.3.x base on
-   1.21.5 and ended in a black screen (`perf/TEST-BLACKSCREEN.md`). The same OpenXR hand-off problem
-   will come back here, so fixing it on 1.21.5 first is useful groundwork. 2–3 weeks.
-5. **Launcher (Pojlib).** Add 26.3 to `supportedVersions.json`, Fabric Loader 0.19.x, and a `mods.json`
-   we host ourselves (the upstream one is fetched live and only knows 1.21.5). Version-specific code
-   would also need updating: `MCOptionUtils`, and the keycode tables (`LwjglGlfwKeycode`, gamepad map) for
-   SDL scancodes. One open question: does the native Unity UI (which we cannot change) accept a
-   version it doesn't know? 1 week, plus the risk from that question.
-6. **Mods.** Sodium (26.2 beta now; wait for 26.3), Lithium, FerriteCore, ImmediatelyFast,
-   EntityCulling, MoreCulling, Fabric API 0.161+. Whatever doesn't exist yet gets dropped for the first
-   build.
-7. **Measure.** Run the full protocol again. 26.x has more content, and Blaze3D changes how Sodium draws,
-   so the memory and frame-time baselines from 1.21.5 do not carry over.
+### QuestCraft's layer is small and self-contained
 
-## Risks, ranked
+Comparing QuestCraft's fork (`6d9b96af`, our import `1809965`) with upstream tag `1.21.5-1.2.5`, the
+QuestCraft-only code is:
 
-1. **SDL3 shim**: nobody has done it on Android; the iOS attempt failed.
-2. **Native toolchain**: a whole new kind of CI work for this repo (NDK, JDK 25, LWJGL 3.4).
-3. **Unity launcher** (native, we can't change it) may not offer or create a 26.3 instance.
-4. **Vivecraft 1.3 on QuestCraft** has already shown a black screen.
-5. **Mod availability** for 26.3, Sodium first.
-6. **Memory**: newer versions usually need more. JDK 25 compact headers may offset some of it.
+| Code | Lines |
+|---|---|
+| `client_vr/provider/openxr/` (`MCOpenXR`, `OpenXRStereoRenderer`, `DeviceCompat`, `XRBindings`, haptics, util) | ~1,970 |
+| `client_vr/provider/control/` (action sets, `VRInputAction` moved out of OpenVR, swipe and haptic helpers) | ~740 |
+| `util/VLoader.java`, JNI into Pojlib's `libvloader`: EGL context/config/display, Dalvik VM, activity | 14 |
+| Hooks in shared code: `VRState` (`case OPENXR -> new MCOpenXR`), `MCVR` (uses `DeviceCompat`) | a few lines |
 
-## Recommendation
+There are also about 50 small edits in shared files. Some are QuestCraft's and some are upstream drift
+between `1.2.5` and the fork's base. Each one needs a look when porting, but most should already be in
+upstream 1.3.18 or no longer matter.
 
-Go in stages, each a headset build, so the work stops being worth it at a clear point if it fails:
+**All the graphics-specific code sits in `DeviceCompat` and `OpenXRStereoRenderer`.** For Vulkan we
+add a `Mobile`-Vulkan variant:
+- `getGraphicsExtension()` → `XR_KHR_vulkan_enable`. Use version 1, because Minecraft creates its own
+  `VkInstance` and device; version 2 wants the runtime to create them.
+- `checkGraphics()` → `XrGraphicsBindingVulkanKHR` filled from `VulkanHelper`'s pointers.
+- Swapchain images become `XrSwapchainImageVulkanKHR`. Each eye is blitted into the acquired swapchain
+  image with `VulkanHelper`'s blit and barriers. Zero-copy (wrapping the swapchain images as Minecraft
+  textures) can come later.
+- The required extensions come from `xrGetVulkanInstanceExtensionsKHR` / `...DeviceExtensionsKHR`,
+  fed into upstream's existing "save and restart" path. A later improvement is to create the
+  OpenXR instance before Minecraft's Vulkan init, which would avoid the restart.
+- Vulkan needs no EGL getters from `VLoader`, only the Dalvik VM and activity, so this path does not
+  depend on LTW at all.
 
-1. **Fix the claudecraft-4 black screen on 1.21.5** (Vivecraft 1.3 base). This is needed for any port.
-2. **JDK 25 on 1.21.5** (1.21.5 runs fine on Java 25). It tests the runtime swap on its own and gives
-   us compact object headers now, behind a `claudecraft.properties` toggle.
-3. **26.2** (GLFW still in use): use the 26.2 experiment as the reference. This proves unobfuscated
-   Fabric, Blaze3D Sodium and Vivecraft 26.x on the Quest.
-4. **26.3**: the SDL3 shim. Do it only once 3 works, and only if 26.3's content matters to you more
-   than the 4–8 weeks it takes. Waiting has a benefit too: once 26.4 makes Vulkan the default, a direct
-   Vulkan + `XR_KHR_vulkan_enable2` path could remove LTW (and its draw-call cost) altogether, which
-   would be a bigger performance win than anything left on 1.21.5.
+### The launcher side (Pojlib)
 
-Unverified (sites blocked from the container): a Fabric jar of Vivecraft 26.3, Sodium 26.3, the
-exact LWJGL version 26.3 ships, and its GL minimum. Check those on Modrinth/minecraft.wiki before
-starting step 3.
+- The 6.0.0 APK's native libraries (JRE 22, LWJGL 3.3.3 natives, LTW, `libpojavexec`, `libvloader`)
+  come from the released APK; we have never built native code. 26.3 needs:
+  - **JDK 25 for Android aarch64.** I found no ready build: Zalith's build repo is for Java 8, and the
+    26.2 experiment packages one but its build process is not documented. Most likely we build it in
+    CI with the NDK, using the same patch set Pojav-family launchers use.
+  - **LWJGL natives for the version 26.3 ships.** That includes SDL3 (or a stub), shaderc if the
+    game ships it (one third-party note says 26.3 compiles shaders with Shaderc on both GL and
+    Vulkan), plus OpenAL, stb, freetype and whatever else its version JSON lists. Vulkan itself is
+    Java-only in LWJGL and loads `/system/lib64/libvulkan.so`.
+- **The window.** Pojlib replaces `org.lwjgl.glfw.GLFW` with a Java stub that has no OS window. 26.3
+  calls SDL3 instead, and on Vulkan it also wants a `VkSurfaceKHR` + swapchain for the desktop window
+  (`SDL_Vulkan_CreateSurface`). Options:
+  1. A Java stub of the SDL calls Minecraft makes, like the GLFW stub. We need the exact call list from
+     the 26.3 jar first.
+  2. Real SDL3 built for Android with the `offscreen` video driver (no `SDLActivity`, which would clash
+     with Unity's activity).
+  3. Either of the above, plus a mixin that skips presenting the window in VR. Vivecraft renders eyes
+     into its own targets anyway, so the window swapchain could be 1×1 or headless.
+- `pojlib/src/main/assets` / `MCOptionUtils`: write Minecraft's graphics-backend option from a
+  `claudecraft.properties` key (Rule 1). Keycode tables (`LwjglGlfwKeycode`, gamepad map) move to SDL
+  scancodes, and mouse buttons become 1-based.
+- `mods.json` is fetched live from upstream's `QuestCraft-6.0.0` branch and only knows 1.21.5, so we
+  need our own. `supportedVersions.json` needs 26.3. Open question: will the native Unity UI (which we
+  can't change) list and create a 26.3 instance?
+
+## Plan
+
+Each milestone either ends in something we can check, or stops the experiment.
+
+**M0: toolchain and facts (CI only, no headset).**
+- Import upstream `Multiloader-26.3` @ `15a9011` as a git subtree. Add a CI job with JDK 25 that builds
+  its Fabric jar.
+- In CI (which can reach Mojang), read 26.3's version JSON and record the LWJGL version and every
+  native library. Run `javap` on the client jar and list every `org.lwjgl.sdl` call, plus what the
+  Vulkan backend needs from the window. Also confirm the graphics-backend option name in `options.txt`.
+- Check Modrinth for 26.3 builds of Sodium, Lithium, FerriteCore, ImmediatelyFast, EntityCulling and
+  MoreCulling.
+
+**M1: QuestCraft's OpenXR provider on upstream 26.3 (code; it compiles, untested).**
+- Port `provider/openxr`, `provider/control` and `VLoader` onto the new subtree: renderpearl API
+  changes, SDL input.
+- Keep the GLES binding, and add the Vulkan binding described above.
+- Add a `VRSettings` toggle for the OpenXR graphics binding, and the `[VCPERF]` line (Rules 1 and 2).
+
+**M2: 26.3 reaches the title screen on the Quest, flat, no VR (the big risk).**
+- Build JDK 25, the LWJGL/SDL3 natives and the SDL window shim. Patch Pojlib to launch 26.3.
+- Try OpenGL + LTW first: it changes less, and LTW is already proven. Then switch the backend toggle
+  to Vulkan.
+- Kill criteria: no working JDK 25 build, or an SDL shim that needs more than about 3 weeks.
+
+**M3: VR on Vulkan.** OpenXR session with the Vulkan binding, eyes blitted into the swapchain. Then
+re-apply our perf toggles from claudecraft-1 where they still apply (menu world, outline targets, aux
+buffers, refresh rate, late frame wait). Then the measurement protocol, comparing against claudecraft-1.
+
+**Do the 1.21.5 lessons carry over?** The claudecraft-4 black screen (Vivecraft 1.3.15 on 1.21.5)
+happened at the OpenXR hand-off with QuestCraft's code. M3 meets the same hand-off, so the
+`perf/TEST-BLACKSCREEN.md` notes apply.
+
+## Open questions
+
+- Is Vulkan in 26.3 an option you can switch to? Reports say yes ("Default / OpenGL / Vulkan
+  (experimental)"), with OpenGL as the default until 26.4. M0 confirms it from the jar.
+- Does the Quest's Vulkan driver (Adreno 740) expose what the backend requires (Vulkan 1.2, dynamic
+  rendering, push descriptors) and what the runtime asks for? Check on the headset with
+  `vulkaninfo`, or from Minecraft's log once M2 runs.
+- Does the Unity launcher accept a 26.3 instance?
+- Fabric builds of Sodium and the other mods for 26.3 (Sodium has 0.9 betas for 26.2, already on
+  Blaze3D).
 
 ## Sources
 
-- Fabric 26.1 announcement and porting guide: https://fabricmc.net/2026/03/14/261.html, https://docs.fabricmc.net/develop/porting/
-- 26.3 release and SDL3: https://www.gamingonlinux.com/2026/09/minecraft-java-edition-26-3-wilderness-bound-update-released/, https://www.minecraft.net/en-us/article/minecraft-26-3-snapshot-4
+- Upstream Vivecraft: https://github.com/Vivecraft/VivecraftMod (branch `Multiloader-26.3`)
+- Fabric 26.1: https://fabricmc.net/2026/03/14/261.html, https://docs.fabricmc.net/develop/porting/
+- 26.3 and SDL3: https://www.gamingonlinux.com/2026/09/minecraft-java-edition-26-3-wilderness-bound-update-released/, https://www.minecraft.net/en-us/article/minecraft-26-3-snapshot-4
 - Vulkan: https://www.minecraft.net/en-us/article/minecraft-26-2-snapshot-1, https://syntaxmine.com/articles/minecraft-26-4-snapshot-1
-- SDL3 on mobile: https://github.com/catsruledogs/Amethyst-iOS-25/issues/29, https://github.com/minizyz/glfw-restored, https://github.com/soymods/pathmind/pull/91
-- 26.2 Quest port: https://github.com/necat101/questcraft-26.2-experiment
-- Upstream state: https://github.com/QuestCraftPlusPlus/Pojlib, https://github.com/QuestCraftPlusPlus/VivecraftMod
-- Vivecraft 26.x: https://www.curseforge.com/minecraft/mc-mods/vivecraft/files/8161675
-- Sodium 26.2: https://modrinth.com/mod/sodium/versions
+- SDL3 on mobile launchers: https://github.com/catsruledogs/Amethyst-iOS-25/issues/29, https://github.com/minizyz/glfw-restored
+- 26.2 Quest port (reference): https://github.com/necat101/questcraft-26.2-experiment
+- Upstream QuestCraft: https://github.com/QuestCraftPlusPlus/Pojlib, https://github.com/QuestCraftPlusPlus/VivecraftMod
+- JDK builds for Android: https://github.com/ZalithLauncher/Android_OpenJDK_Build
