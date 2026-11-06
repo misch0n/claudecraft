@@ -2,14 +2,14 @@
 
 Notes only, no code; this branch never builds. One directory per topic. Each note was written against
 the code of a specific build; paths inside a note refer to that build's tree, not to this branch.
-Code and the build history live on `main` and `release/mihail.N` (see `CLAUDE.md` on `main`).
+Code and the build history live on `main` and `release/claudecraft-N` (see `CLAUDE.md` on `main`).
 
 | Topic | Files | Written against | Question |
 |---|---|---|---|
-| `unityless-launcher/` | `UNITYLESS-LAUNCHER.md`, `LAUNCHER-LEFTOVERS.md` | `release/mihail.4` (2026-10-16) | Can QuestCraft launch without the Unity launcher, and what does the launcher and title screen leave in memory once in game? |
-| `mixed-reality/` | `MR-DIORAMA.md` | `release/mihail.4` (2026-10-16) | Is a mixed-reality "diorama" mode cheaper than normal play? Reasoning, unmeasured. |
-| `worldedit/` | `WORLDEDIT.md` | `release/mihail.4` (2026-10-16) | Can we run WorldEdit and a god mode on mihail.4? |
-| `visor/` | `VISOR.md`, `FINDINGS-section-9.md` | `release/mihail.3` era (2026-10-15) | How does the Visor VR mod compare with our Vivecraft fork, and what can we learn from it (FINDINGS V16)? |
+| `unityless-launcher/` | `UNITYLESS-LAUNCHER.md`, `LAUNCHER-LEFTOVERS.md` | `release/claudecraft-4` (2026-10-16) | Can QuestCraft launch without the Unity launcher, and what does the launcher and title screen leave in memory once in game? |
+| `mixed-reality/` | `MR-DIORAMA.md` | `release/claudecraft-4` (2026-10-16) | Is a mixed-reality "diorama" mode cheaper than normal play? Reasoning, unmeasured. |
+| `worldedit/` | `WORLDEDIT.md` | `release/claudecraft-4` (2026-10-16) | Can we run WorldEdit and a god mode on mihail.4? |
+| `visor/` | `VISOR.md`, `FINDINGS-section-9.md` | `release/claudecraft-3` era (2026-10-15) | How does the Visor VR mod compare with our Vivecraft fork, and what can we learn from it (FINDINGS V16)? |
 
 ## Where these came from
 
