@@ -513,6 +513,17 @@ public class RenderHelper {
      * @param errorSection name of the section that is checked, this gets logged if there are any errors
      * @return error string if there was one
      */
+    /**
+     * claudecraft: per-frame variant of {@link #checkGLError(String)}. glGetError can stall the GL
+     * translation layer and driver, so per-frame checks only run when {@code glErrorChecks} is on.
+     * Setup paths keep using {@link #checkGLError(String)}, since their result feeds error screens.
+     */
+    public static void checkGLErrorFrame(String errorSection) {
+        if (ClientDataHolderVR.getInstance().vrSettings.glErrorChecks) {
+            checkGLError(errorSection);
+        }
+    }
+
     public static String checkGLError(String errorSection) {
         int error = GlStateManager._getError();
         if (error != 0) {

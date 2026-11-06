@@ -74,6 +74,34 @@ public class MCOpenXR extends MCVR {
     public boolean shouldRender = true;
     public long[] haptics = new long[2];
     public String systemName;
+    // claudecraft: xrRefreshRate, registered in PerfHooks while this session exists
+    private Runnable refreshRateApplier;
+    // claudecraft: cacheInputOrigins, bound sources per action; cleared when the bindings can change
+    private static final long ORIGIN_CACHE_REFRESH_NANOS = 5_000_000_000L;
+    private final Map<VRInputAction, List<Long>> originCache = new IdentityHashMap<>();
+    private long originCacheTime = System.nanoTime();
+    private boolean originQueryFailed;
+    // claudecraft: xrStartupRetry
+    private static final long STARTUP_RETRY_BUDGET_NANOS = 15_000_000_000L;
+    private static final long STARTUP_RETRY_SPACING_MILLIS = 1000L;
+    private static final long SESSION_READY_TIMEOUT_NANOS = 30_000_000_000L;
+    private boolean startupRetry;
+    private boolean loaderInitialized;
+    private long startupDeadline;
+    // claudecraft: xrSessionStateHandling. sessionRunning: between a successful xrBeginSession and
+    // STOPPING/EXITING/LOSS_PENDING; frameBegun: xrBeginFrame succeeded this frame, so xrEndFrame is due.
+    // Both are kept up to date regardless of the toggle, and only read when it is on.
+    private static final long IDLE_SLEEP_MILLIS = 20L;
+    private static final long ERROR_LOG_INTERVAL_NANOS = 1_000_000_000L;
+    public boolean sessionRunning;
+    public boolean frameBegun;
+    private final Map<String, long[]> errorLogState = new HashMap<>();
+    // claudecraft: xrPerfHints. The LWJGL build has no class for XR_KHR_android_thread_settings, so its name,
+    // enum value and function are spelled out here (from the OpenXR 1.0 spec)
+    private static final String XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME = "XR_KHR_android_thread_settings";
+    private static final int XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR = 3;
+    private boolean perfHintsRequested;
+    private boolean threadSettingsEnabled;
 
 
     public MCOpenXR(Minecraft mc, ClientDataHolderVR dh) {
@@ -90,13 +118,23 @@ public class MCOpenXR extends MCVR {
 
     @Override
     public void destroy() {
+        // claudecraft: xrRefreshRate, no live changes once the session is gone
+        if (this.refreshRateApplier != null &&
+            org.vivecraft.client_vr.perf.PerfHooks.refreshRateApplier == this.refreshRateApplier)
+        {
+            org.vivecraft.client_vr.perf.PerfHooks.refreshRateApplier = null;
+        }
+        this.originCache.clear(); // claudecraft: cacheInputOrigins
         int error;
         // Not sure if we need the action sets one here, as we are shutting down
         for (Long inputActionSet : this.actionSetHandles.values()) {
             error = XR10.xrDestroyActionSet(new XrActionSet(inputActionSet, this.instance));
             logError(error, "xrDestroyActionSet", "");
         }
-        for (XrSwapchain xrSwapchain : this.swapchain) {
+        // claudecraft: xrStartupRetry, the swapchains don't exist when init failed before creating them
+        XrSwapchain[] swapchains =
+            this.swapchain == null && this.dh.vrSettings.xrStartupRetry ? new XrSwapchain[0] : this.swapchain;
+        for (XrSwapchain xrSwapchain : swapchains) {
             error = XR10.xrDestroySwapchain(xrSwapchain);
             logError(error, "xrDestroySwapchain", "");
         }
@@ -193,6 +231,13 @@ public class MCOpenXR extends MCVR {
         if (this.mc == null) {
             return;
         }
+        // claudecraft: xrSessionStateHandling, no frame calls (and no spinning) while the session is not running
+        this.frameBegun = false;
+        boolean stateHandling = this.dh.vrSettings.xrSessionStateHandling;
+        if (stateHandling && !this.sessionRunning) {
+            this.idleWithoutFrame();
+            return;
+        }
 
         try (MemoryStack stack = MemoryStack.stackPush()) {
             XrFrameState frameState = XrFrameState.calloc(stack).type(XR10.XR_TYPE_FRAME_STATE);
@@ -202,6 +247,11 @@ public class MCOpenXR extends MCVR {
                 XrFrameWaitInfo.calloc(stack).type(XR10.XR_TYPE_FRAME_WAIT_INFO),
                 frameState);
             logError(error, "xrWaitFrame", "");
+            // claudecraft: xrSessionStateHandling, a failed wait gives no frame to begin
+            if (stateHandling && error < 0) {
+                this.idleWithoutFrame();
+                return;
+            }
 
             this.time = frameState.predictedDisplayTime();
             this.shouldRender = frameState.shouldRender();
@@ -210,6 +260,7 @@ public class MCOpenXR extends MCVR {
                 this.session,
                 XrFrameBeginInfo.calloc(stack).type(XR10.XR_TYPE_FRAME_BEGIN_INFO));
             logError(error, "xrBeginFrame", "");
+            this.frameBegun = error >= 0; // claudecraft: xrSessionStateHandling
 
 
             XrViewState viewState = XrViewState.calloc(stack).type(XR10.XR_TYPE_VIEW_STATE);
@@ -253,6 +304,13 @@ public class MCOpenXR extends MCVR {
                         .activeActionSets(this.activeActionSetsBuffer);
                     error = XR10.xrSyncActions(this.session, syncInfo);
                     logError(error, "xrSyncActions", "");
+                }
+
+                // claudecraft: cacheInputOrigins, re-query the bound sources every 5 s as a safety net
+                if (this.dh.vrSettings.cacheInputOrigins &&
+                    System.nanoTime() - this.originCacheTime > ORIGIN_CACHE_REFRESH_NANOS)
+                {
+                    this.clearOriginCache();
                 }
 
                 this.inputActions.values().forEach(this::readNewData);
@@ -334,6 +392,35 @@ public class MCOpenXR extends MCVR {
 
             this.updateAim();
         }
+    }
+
+    /**
+     * claudecraft: xrSessionStateHandling, a frame without xrWaitFrame: nothing is rendered or submitted, every
+     * binding is released (what the failing input reads used to produce), the last poses are kept, and the
+     * thread sleeps instead of spinning
+     */
+    private void idleWithoutFrame() {
+        this.shouldRender = false;
+        if (this.inputInitialized) {
+            for (VRInputAction action : this.inputActions.values()) {
+                for (VRInputAction.DigitalData data : action.digitalData) {
+                    data.state = false;
+                    data.isActive = false;
+                    data.isChanged = false;
+                }
+                for (VRInputAction.AnalogData data : action.analogData) {
+                    data.deltaX = -data.x;
+                    data.deltaY = -data.y;
+                    data.x = 0.0F;
+                    data.y = 0.0F;
+                    data.isActive = false;
+                    data.isChanged = false;
+                }
+            }
+        }
+        try {
+            Thread.sleep(IDLE_SLEEP_MILLIS);
+        } catch (InterruptedException ignored) {}
     }
 
     public void readNewData(VRInputAction action) {
@@ -510,13 +597,37 @@ public class MCOpenXR extends MCVR {
                 case XR10.XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING -> {
                     XrEventDataInstanceLossPending instanceLossPending = XrEventDataInstanceLossPending.create(
                         event.address());
+                    // claudecraft: xrSessionStateHandling, was silently ignored
+                    if (this.dh.vrSettings.xrSessionStateHandling) {
+                        VRSettings.LOGGER.warn("[VCPERF] OpenXR instance loss pending at {}",
+                            instanceLossPending.lossTime());
+                    }
                 }
                 case XR10.XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED -> {
                     this.sessionChanged(XrEventDataSessionStateChanged.create(event.address()));
                 }
                 case XR10.XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED -> {
+                    // claudecraft: cacheInputOrigins, controllers or hands changed, so the bound sources did too
+                    VRSettings.LOGGER.info("[VCPERF] OpenXR interaction profile changed");
+                    this.clearOriginCache();
                 }
                 case XR10.XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING -> {
+                }
+                case FBDisplayRefreshRate.XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB -> {
+                    // claudecraft: xrRefreshRate, the runtime switched rates (only sent with the FB extension)
+                    XrEventDataDisplayRefreshRateChangedFB changed = XrEventDataDisplayRefreshRateChangedFB.create(
+                        event.address());
+                    org.vivecraft.client_vr.perf.PerfProbe.put("xrRefreshRateActual", changed.toDisplayRefreshRate());
+                    VRSettings.LOGGER.info("[VCPERF] refresh rate changed from {} to {} Hz",
+                        changed.fromDisplayRefreshRate(), changed.toDisplayRefreshRate());
+                }
+                case EXTPerformanceSettings.XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT -> {
+                    // claudecraft: xrPerfHints, CPU/GPU throttling notifications (only sent with the extension)
+                    XrEventDataPerfSettingsEXT perf = XrEventDataPerfSettingsEXT.create(event.address());
+                    VRSettings.LOGGER.info(
+                        "[VCPERF] xr perf notification domain={} subDomain={} from={} to={} (domain 1=CPU 2=GPU; " +
+                            "subDomain 1=compositing 2=rendering 3=thermal; level 0=normal 25=warning 75=impaired)",
+                        perf.domain(), perf.subDomain(), perf.fromLevel(), perf.toLevel());
                 }
                 default -> {
                 }
@@ -526,6 +637,14 @@ public class MCOpenXR extends MCVR {
 
     private void sessionChanged(XrEventDataSessionStateChanged xrEventDataSessionStateChanged) {
         int state = xrEventDataSessionStateChanged.state();
+        // claudecraft: cacheInputOrigins, bound sources can differ once the session is (re)started or focused
+        if (state == XR10.XR_SESSION_STATE_READY || state == XR10.XR_SESSION_STATE_FOCUSED) {
+            this.clearOriginCache();
+        }
+        // claudecraft: xrSessionStateHandling, every transition in the log (headset off/on, system menu, ...)
+        if (this.dh.vrSettings.xrSessionStateHandling) {
+            VRSettings.LOGGER.info("[VCPERF] OpenXR session state {}", sessionStateName(state));
+        }
 
         switch (state) {
             case XR10.XR_SESSION_STATE_READY: {
@@ -537,12 +656,14 @@ public class MCOpenXR extends MCVR {
 
                     int error = XR10.xrBeginSession(this.session, sessionBeginInfo);
                     logError(error, "xrBeginSession", "XR_SESSION_STATE_READY");
+                    this.sessionRunning = error >= 0; // claudecraft: xrSessionStateHandling
                 }
                 this.isActive = true;
                 break;
             }
             case XR10.XR_SESSION_STATE_STOPPING: {
                 this.isActive = false;
+                this.sessionRunning = false; // claudecraft: xrSessionStateHandling
                 int error = XR10.xrEndSession(this.session);
                 logError(error, "xrEndSession", "XR_SESSION_STATE_STOPPING");
                 break;
@@ -552,6 +673,7 @@ public class MCOpenXR extends MCVR {
                 break;
             }
             case XR10.XR_SESSION_STATE_EXITING: {
+                this.sessionRunning = false; // claudecraft: xrSessionStateHandling
                 if (ClientDataHolderVR.getInstance().vrSettings.closeWithRuntime) {
                     VRSettings.LOGGER.info("Vivecraft: OpenXR stopped, closing the game with it");
                     this.mc.stop();
@@ -568,11 +690,41 @@ public class MCOpenXR extends MCVR {
                 break;
             }
             case XR10.XR_SESSION_STATE_LOSS_PENDING: {
+                // claudecraft: xrSessionStateHandling, the session is being lost: no more frame calls, and leave
+                // like on EXITING (closeWithRuntime: save and close the game) instead of running on blind
+                if (this.dh.vrSettings.xrSessionStateHandling) {
+                    this.sessionRunning = false;
+                    this.isActive = false;
+                    if (ClientDataHolderVR.getInstance().vrSettings.closeWithRuntime) {
+                        VRSettings.LOGGER.warn("Vivecraft: OpenXR session lost, closing the game with it");
+                        this.mc.stop();
+                    } else {
+                        VRSettings.LOGGER.warn("Vivecraft: OpenXR session lost, disabling VR");
+                        VRState.VR_ENABLED = false;
+                        ClientDataHolderVR.getInstance().vrSettings.vrEnabled = false;
+                        ClientDataHolderVR.getInstance().vrSettings.saveOptions();
+                    }
+                }
                 break;
             }
             default:
                 break;
         }
+    }
+
+    // claudecraft: xrSessionStateHandling, for the state log line
+    private static String sessionStateName(int state) {
+        return switch (state) {
+            case XR10.XR_SESSION_STATE_IDLE -> "IDLE";
+            case XR10.XR_SESSION_STATE_READY -> "READY";
+            case XR10.XR_SESSION_STATE_SYNCHRONIZED -> "SYNCHRONIZED";
+            case XR10.XR_SESSION_STATE_VISIBLE -> "VISIBLE";
+            case XR10.XR_SESSION_STATE_FOCUSED -> "FOCUSED";
+            case XR10.XR_SESSION_STATE_STOPPING -> "STOPPING";
+            case XR10.XR_SESSION_STATE_LOSS_PENDING -> "LOSS_PENDING";
+            case XR10.XR_SESSION_STATE_EXITING -> "EXITING";
+            default -> "UNKNOWN(" + state + ")";
+        };
     }
 
     @Override
@@ -595,8 +747,17 @@ public class MCOpenXR extends MCVR {
             this.tried = true;
             this.mc = Minecraft.getInstance();
             try {
-                this.initializeOpenXRInstance();
-                this.initializeOpenXRSession();
+                // claudecraft: xrStartupRetry, bounded retries of instance and session creation, timed READY wait
+                this.startupRetry = this.dh.vrSettings.xrStartupRetry;
+                if (this.startupRetry) {
+                    this.startupDeadline = System.nanoTime() + STARTUP_RETRY_BUDGET_NANOS;
+                    this.startWithRetry("instance", this::initializeOpenXRInstance);
+                    this.startWithRetry("session", this::initializeOpenXRSession);
+                    this.waitForSessionReady();
+                } else {
+                    this.initializeOpenXRInstance();
+                    this.initializeOpenXRSession();
+                }
                 this.initializeOpenXRSpace();
                 this.initializeOpenXRSwapChain();
                 this.initInputAndApplication();
@@ -622,9 +783,71 @@ public class MCOpenXR extends MCVR {
         }
     }
 
+    /**
+     * claudecraft: xrStartupRetry, runs one startup step, retrying it every second until it works or the
+     * shared startup budget (15 s from the first instance attempt) is used up
+     */
+    private void startWithRetry(String step, Runnable attempt) {
+        long start = System.nanoTime();
+        for (int tries = 1; ; tries++) {
+            try {
+                attempt.run();
+                VRSettings.LOGGER.info("[VCPERF] xr startup: {} created on attempt {} after {} ms", step, tries,
+                    (System.nanoTime() - start) / 1_000_000L);
+                return;
+            } catch (RuntimeException e) {
+                if (System.nanoTime() + STARTUP_RETRY_SPACING_MILLIS * 1_000_000L > this.startupDeadline) {
+                    VRSettings.LOGGER.error("[VCPERF] xr startup: {} failed on attempt {} after {} ms, giving up: {}",
+                        step, tries, (System.nanoTime() - start) / 1_000_000L, e.getMessage());
+                    throw e;
+                }
+                VRSettings.LOGGER.warn("[VCPERF] xr startup: {} failed on attempt {} after {} ms, retrying in {} ms: {}",
+                    step, tries, (System.nanoTime() - start) / 1_000_000L, STARTUP_RETRY_SPACING_MILLIS,
+                    e.getMessage());
+                try {
+                    Thread.sleep(STARTUP_RETRY_SPACING_MILLIS);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
+    }
+
+    /**
+     * claudecraft: xrStartupRetry, the original READY wait with a short sleep and a 30 s timeout instead of an
+     * endless busy loop
+     */
+    private void waitForSessionReady() {
+        long start = System.nanoTime();
+        VRSettings.LOGGER.info("Vivecraft: waiting for OpenXR session to start");
+        while (!this.isActive) {
+            this.pollVREvents();
+            if (this.isActive) {
+                break;
+            }
+            if (System.nanoTime() - start > SESSION_READY_TIMEOUT_NANOS) {
+                throw new RuntimeException("OpenXR session did not become ready within " +
+                    SESSION_READY_TIMEOUT_NANOS / 1_000_000_000L + " s. Restart the game and try again.");
+            }
+            try {
+                Thread.sleep(5L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for the OpenXR session to start");
+            }
+        }
+        VRSettings.LOGGER.info("[VCPERF] xr startup: session ready after {} ms",
+            (System.nanoTime() - start) / 1_000_000L);
+    }
+
     private void initializeOpenXRInstance() {
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            this.device.initOpenXRLoader(stack);
+            // claudecraft: xrStartupRetry may run this method again, the loader (and the Unity hand-off) only once
+            if (!this.loaderInitialized) {
+                this.device.initOpenXRLoader(stack);
+                this.loaderInitialized = true;
+            }
 
             // Check extensions
             IntBuffer numExtensions = stack.callocInt(1);
@@ -642,7 +865,11 @@ public class MCOpenXR extends MCVR {
             // get needed extensions
             String graphicsExtension = this.device.getGraphicsExtension();
             boolean missingGraphics = true;
-            PointerBuffer extensions = stack.callocPointer(5);
+            // claudecraft: xrPerfHints, room for its two extensions (the 5 above were already a full buffer)
+            PointerBuffer extensions = stack.callocPointer(7);
+            // claudecraft: xrPerfHints, only when the toggle is on at VR init
+            this.perfHintsRequested = this.dh.vrSettings.xrPerfHints;
+            this.threadSettingsEnabled = false;
             while (properties.hasRemaining()) {
                 XrExtensionProperties prop = properties.get();
                 String extensionName = prop.extensionNameString();
@@ -667,6 +894,15 @@ public class MCOpenXR extends MCVR {
                 }
                 if (extensionName.equals(BDControllerInteraction.XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME)) {
                     extensions.put(memAddress(stackUTF8(BDControllerInteraction.XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME)));
+                }
+                if (this.perfHintsRequested &&
+                    extensionName.equals(EXTPerformanceSettings.XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME))
+                {
+                    extensions.put(memAddress(stackUTF8(EXTPerformanceSettings.XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME)));
+                }
+                if (this.perfHintsRequested && extensionName.equals(XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME)) {
+                    extensions.put(memAddress(stackUTF8(XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME)));
+                    this.threadSettingsEnabled = true;
                 }
             }
 
@@ -763,9 +999,17 @@ public class MCOpenXR extends MCVR {
             PointerBuffer sessionPtr = stack.callocPointer(1);
             error = XR10.xrCreateSession(this.instance, info, sessionPtr);
             logError(error, "xrCreateSession", "");
+            // claudecraft: xrStartupRetry, a failed session is retried instead of waiting forever for its READY
+            if (this.startupRetry && error < 0) {
+                throw new RuntimeException("xrCreateSession failed: " + getResultName(error));
+            }
 
             this.session = new XrSession(sessionPtr.get(0), this.instance);
 
+            // claudecraft: xrStartupRetry waits for READY in waitForSessionReady(), with a timeout
+            if (this.startupRetry) {
+                return;
+            }
             boolean checked = false;
             while (!this.isActive) {
                 if (!checked)
@@ -898,13 +1142,80 @@ public class MCOpenXR extends MCVR {
     }
 
     private void initDisplayRefreshRate() {
+        // claudecraft: xrRefreshRate. FB functions only when the extension is enabled (their pointers are null
+        // otherwise), the chosen rate only when the runtime offers it, and live changes from the settings
+        if (!this.instance.getCapabilities().XR_FB_display_refresh_rate) {
+            VRSettings.LOGGER.info("[VCPERF] refresh rate: XR_FB_display_refresh_rate not enabled, runtime default");
+            org.vivecraft.client_vr.perf.PerfProbe.put("xrRefreshRateActual", "n/a");
+            return;
+        }
+        this.applyRefreshRate("init");
+        this.refreshRateApplier = () -> this.applyRefreshRate("setting");
+        org.vivecraft.client_vr.perf.PerfHooks.refreshRateApplier = this.refreshRateApplier;
+    }
+
+    /**
+     * claudecraft: requests the {@code xrRefreshRate} setting if the runtime enumerates it, else the highest
+     * enumerated rate (MAX, the original behaviour), and logs the rate in effect.
+     * The switch can complete a few frames later; {@code XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB} logs it.
+     */
+    private void applyRefreshRate(String reason) {
+        if (this.session == null) {
+            return;
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer refreshRateCount = stack.callocInt(1);
-            FBDisplayRefreshRate.xrEnumerateDisplayRefreshRatesFB(session, refreshRateCount, null);
+            int error = FBDisplayRefreshRate.xrEnumerateDisplayRefreshRatesFB(this.session, refreshRateCount, null);
+            logError(error, "xrEnumerateDisplayRefreshRatesFB", "get count");
+            if (error < 0 || refreshRateCount.get(0) <= 0) {
+                return;
+            }
             FloatBuffer refreshRateBuffer = stack.callocFloat(refreshRateCount.get(0));
-            FBDisplayRefreshRate.xrEnumerateDisplayRefreshRatesFB(session, refreshRateCount, refreshRateBuffer);
-            refreshRateBuffer.rewind();
-            FBDisplayRefreshRate.xrRequestDisplayRefreshRateFB(session, refreshRateBuffer.get(refreshRateCount.get(0) -1));
+            error = FBDisplayRefreshRate.xrEnumerateDisplayRefreshRatesFB(this.session, refreshRateCount,
+                refreshRateBuffer);
+            logError(error, "xrEnumerateDisplayRefreshRatesFB", "get rates");
+            if (error < 0) {
+                return;
+            }
+
+            VRSettings.XrRefreshRate setting = this.dh.vrSettings.xrRefreshRate;
+            float wanted = setting == null ? 0.0F : switch (setting) {
+                case HZ72 -> 72.0F;
+                case HZ90 -> 90.0F;
+                case HZ120 -> 120.0F;
+                default -> 0.0F;
+            };
+            float highest = 0.0F;
+            float chosen = 0.0F;
+            List<Float> offered = new ArrayList<>();
+            for (int i = 0; i < refreshRateCount.get(0); i++) {
+                float rate = refreshRateBuffer.get(i);
+                offered.add(rate);
+                highest = Math.max(highest, rate);
+                if (wanted > 0.0F && Math.abs(rate - wanted) < 0.5F) {
+                    chosen = rate;
+                }
+            }
+            if (chosen == 0.0F) {
+                if (wanted > 0.0F) {
+                    VRSettings.LOGGER.warn("[VCPERF] refresh rate {} Hz is not offered {}, using the highest", wanted,
+                        offered);
+                }
+                chosen = highest;
+            }
+
+            error = FBDisplayRefreshRate.xrRequestDisplayRefreshRateFB(this.session, chosen);
+            logError(error, "xrRequestDisplayRefreshRateFB", String.valueOf(chosen));
+
+            FloatBuffer current = stack.callocFloat(1);
+            int getError = FBDisplayRefreshRate.xrGetDisplayRefreshRateFB(this.session, current);
+            logError(getError, "xrGetDisplayRefreshRateFB", "");
+            float actual = getError >= 0 ? current.get(0) : -1.0F;
+
+            org.vivecraft.client_vr.perf.PerfProbe.put("xrRefreshRateRequested", chosen);
+            org.vivecraft.client_vr.perf.PerfProbe.put("xrRefreshRateActual", actual);
+            VRSettings.LOGGER.info("[VCPERF] refresh rate reason={} setting={} offered={} requested={} result={} actual={}",
+                reason, setting, offered, chosen, error, actual);
         }
     }
 
@@ -932,6 +1243,58 @@ public class MCOpenXR extends MCVR {
         //this.installApplicationManifest(false);
         this.inputInitialized = true;
         initDisplayRefreshRate();
+        this.applyPerfHints(); // claudecraft: xrPerfHints
+    }
+
+    /**
+     * claudecraft: xrPerfHints, when its extensions were enabled at instance creation: marks the calling thread
+     * (the render thread, which runs init) as the renderer main thread, and asks for sustained high CPU and GPU
+     * levels. Logs what was applied.
+     */
+    private void applyPerfHints() {
+        if (!this.perfHintsRequested) {
+            return;
+        }
+        String thread = "not offered";
+        if (this.threadSettingsEnabled) {
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                // "/proc/thread-self" links to "<pid>/task/<tid>"
+                String self = java.nio.file.Files.readSymbolicLink(java.nio.file.Path.of("/proc/thread-self"))
+                    .toString();
+                int tid = Integer.parseInt(self.substring(self.lastIndexOf('/') + 1));
+                PointerBuffer function = stack.callocPointer(1);
+                int error = XR10.xrGetInstanceProcAddr(this.instance, "xrSetAndroidApplicationThreadKHR", function);
+                logError(error, "xrGetInstanceProcAddr", "xrSetAndroidApplicationThreadKHR");
+                if (error >= 0 && function.get(0) != NULL) {
+                    // XrResult xrSetAndroidApplicationThreadKHR(XrSession, XrAndroidThreadTypeKHR, uint32_t threadId)
+                    error = org.lwjgl.system.JNI.callPI(this.session.address(),
+                        XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR, tid, function.get(0));
+                    logError(error, "xrSetAndroidApplicationThreadKHR", "renderer main " + tid);
+                    thread = "rendererMain tid=" + tid + " result=" + error;
+                } else {
+                    thread = "function missing";
+                }
+            } catch (java.io.IOException | RuntimeException e) {
+                thread = "failed: " + e;
+            }
+        }
+
+        String levels = "not offered";
+        if (this.instance.getCapabilities().XR_EXT_performance_settings) {
+            int cpu = EXTPerformanceSettings.xrPerfSettingsSetPerformanceLevelEXT(this.session,
+                EXTPerformanceSettings.XR_PERF_SETTINGS_DOMAIN_CPU_EXT,
+                EXTPerformanceSettings.XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT);
+            logError(cpu, "xrPerfSettingsSetPerformanceLevelEXT", "CPU");
+            int gpu = EXTPerformanceSettings.xrPerfSettingsSetPerformanceLevelEXT(this.session,
+                EXTPerformanceSettings.XR_PERF_SETTINGS_DOMAIN_GPU_EXT,
+                EXTPerformanceSettings.XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT);
+            logError(gpu, "xrPerfSettingsSetPerformanceLevelEXT", "GPU");
+            levels = "sustainedHigh cpuResult=" + cpu + " gpuResult=" + gpu;
+        }
+
+        VRSettings.LOGGER.info("[VCPERF] xr perf hints: thread [{}] levels [{}]", thread, levels);
+        org.vivecraft.client_vr.perf.PerfProbe.put("xrPerfHintsThread", thread);
+        org.vivecraft.client_vr.perf.PerfProbe.put("xrPerfHintsLevels", levels);
     }
 
     @Override
@@ -946,6 +1309,31 @@ public class MCOpenXR extends MCVR {
 
     @Override
     public List<Long> getOrigins(VRInputAction action) {
+        // claudecraft: cacheInputOrigins, saves two xrEnumerateBoundSourcesForAction calls per action and hand
+        // per frame (and more from VRInputAction.isEnabled()); failed queries are not cached
+        if (this.dh.vrSettings.cacheInputOrigins) {
+            List<Long> origins = this.originCache.get(action);
+            if (origins == null) {
+                origins = this.queryOrigins(action);
+                if (!this.originQueryFailed) {
+                    this.originCache.put(action, origins);
+                }
+            }
+            return origins;
+        }
+        return this.queryOrigins(action);
+    }
+
+    /**
+     * claudecraft: cacheInputOrigins, drops all cached bound sources
+     */
+    private void clearOriginCache() {
+        this.originCache.clear();
+        this.originCacheTime = System.nanoTime();
+    }
+
+    // claudecraft: the original getOrigins(), plus noting whether a runtime call failed
+    private List<Long> queryOrigins(VRInputAction action) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             XrBoundSourcesForActionEnumerateInfo info = XrBoundSourcesForActionEnumerateInfo.calloc(stack);
             info.type(XR10.XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO);
@@ -955,6 +1343,7 @@ public class MCOpenXR extends MCVR {
             IntBuffer buf = stack.callocInt(1);
             int error = XR10.xrEnumerateBoundSourcesForAction(this.session, info, buf, null);
             logError(error, "xrEnumerateBoundSourcesForAction", action.name);
+            this.originQueryFailed = error < 0;
 
             int size = buf.get();
             if (size <= 0) {
@@ -965,6 +1354,7 @@ public class MCOpenXR extends MCVR {
             LongBuffer longbuf = stack.callocLong(size);
             error = XR10.xrEnumerateBoundSourcesForAction(this.session, info, buf, longbuf);
             logError(error, "xrEnumerateBoundSourcesForAction", action.name);
+            this.originQueryFailed |= error < 0;
             long[] array;
             if (longbuf.hasArray()) { //TODO really?
                 array = longbuf.array();
@@ -1346,6 +1736,30 @@ public class MCOpenXR extends MCVR {
      */
     protected void logError(int xrResult, String caller, String... args) {
         if (xrResult < 0) {
+            // claudecraft: xrSessionStateHandling, the same error (caller and result) at most once per second, with
+            // the number of repeats left out. Also called from the haptics thread, hence the lock.
+            if (this.dh.vrSettings.xrSessionStateHandling) {
+                long repeats;
+                synchronized (this.errorLogState) {
+                    long now = System.nanoTime();
+                    long[] last = this.errorLogState.get(caller + ':' + xrResult);
+                    if (last == null) {
+                        last = new long[]{now, 0L};
+                        this.errorLogState.put(caller + ':' + xrResult, last);
+                    } else if (now - last[0] < ERROR_LOG_INTERVAL_NANOS) {
+                        last[1]++;
+                        return;
+                    }
+                    repeats = last[1];
+                    last[0] = now;
+                    last[1] = 0L;
+                }
+                if (repeats > 0L) {
+                    VRSettings.LOGGER.error("{} for {} errored: {} (and {} more times since the last report)", caller,
+                        String.join(" ", args), getResultName(xrResult), repeats);
+                    return;
+                }
+            }
             VRSettings.LOGGER.error("{} for {} errored: {}", caller, String.join(" ", args), getResultName(xrResult));
         }
     }

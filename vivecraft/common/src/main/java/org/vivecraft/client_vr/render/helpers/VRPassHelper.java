@@ -43,7 +43,7 @@ public class VRPassHelper {
         // THIS IS WHERE EVERYTHING IS RENDERED
         MC.gameRenderer.render(deltaTracker, renderLevel);
 
-        RenderHelper.checkGLError("post game render " + eye);
+        RenderHelper.checkGLErrorFrame("post game render " + eye);
 
         if (DATA_HOLDER.currentPass == RenderPass.LEFT || DATA_HOLDER.currentPass == RenderPass.RIGHT) {
             // copies the rendered scene to eye tex with fsaa and other postprocessing effects.
@@ -56,7 +56,7 @@ public class VRPassHelper {
                     DATA_HOLDER.vrRenderer.fsaaFirstPassResultFBO,
                     DATA_HOLDER.vrRenderer.fsaaLastPassResultFBO);
                 rendertarget = DATA_HOLDER.vrRenderer.fsaaLastPassResultFBO;
-                RenderHelper.checkGLError("fsaa " + eye);
+                RenderHelper.checkGLErrorFrame("fsaa " + eye);
                 Profiler.get().pop();
             }
 
@@ -65,7 +65,7 @@ public class VRPassHelper {
                 eye == RenderPass.LEFT ? DATA_HOLDER.vrRenderer.getLeftEyeTarget() :
                     DATA_HOLDER.vrRenderer.getRightEyeTarget(), deltaTracker.getGameTimeDeltaPartialTick(false));
 
-            RenderHelper.checkGLError("post overlay" + eye);
+            RenderHelper.checkGLErrorFrame("post overlay" + eye);
             Profiler.get().pop();
         }
 
@@ -87,10 +87,10 @@ public class VRPassHelper {
             // copy optifine depth buffer, since we need it for the mixed reality split
             RenderSystem.activeTexture(GL13C.GL_TEXTURE0);
             RenderSystem.bindTexture(DATA_HOLDER.vrRenderer.framebufferMR.getDepthTextureId());
-            RenderHelper.checkGLError("pre copy depth");
+            RenderHelper.checkGLErrorFrame("pre copy depth");
             GlStateManager._glCopyTexSubImage2D(GL13C.GL_TEXTURE_2D, 0, 0, 0, 0, 0,
                 DATA_HOLDER.vrRenderer.framebufferMR.width, DATA_HOLDER.vrRenderer.framebufferMR.height);
-            RenderHelper.checkGLError("post copy depth");
+            RenderHelper.checkGLErrorFrame("post copy depth");
             // rebind the original buffer
             DATA_HOLDER.vrRenderer.framebufferMR.bindWrite(false);
         }
@@ -154,6 +154,8 @@ public class VRPassHelper {
         }
 
         Profiler.get().popPush("2D Keyboard");
+        // claudecraft: lazyAuxBuffers, in case the keyboard or radial menu opened after setupRenderConfiguration
+        DATA_HOLDER.vrRenderer.allocateLazyGuiBuffers();
         if (KeyboardHandler.SHOWING && !DATA_HOLDER.vrSettings.physicalKeyboard) {
             MC.mainRenderTarget = KeyboardHandler.FRAMEBUFFER;
             RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
@@ -171,7 +173,7 @@ public class VRPassHelper {
             RenderHelper.drawScreen(guiGraphics, deltaTracker, RadialHandler.UI, true);
         }
         Profiler.get().pop();
-        RenderHelper.checkGLError("post 2d ");
+        RenderHelper.checkGLErrorFrame("post 2d ");
 
         // done with guis
         Profiler.get().pop();
@@ -179,7 +181,19 @@ public class VRPassHelper {
         // render the different vr passes
         List<RenderPass> list = DATA_HOLDER.vrRenderer.getRenderPasses(false);
         DATA_HOLDER.isFirstPass = true;
+        // claudecraft: xrLateFrameWait submits right after the RIGHT eye, so the passes after it don't delay the
+        // frame; exactly one submit per frame either way
+        boolean lateSubmit = org.vivecraft.client_vr.perf.PerfHooks.lateFrameWait;
+        boolean submitted = false;
+        // claudecraft: xrSessionStateHandling, no eye images this frame (runtime said don't render, or the
+        // session is stopped): skip the eye passes, the empty frame is still submitted below
+        boolean eyesAvailable = DATA_HOLDER.vrRenderer.isEyeFrameAvailable();
         for (RenderPass renderpass : list) {
+            // claudecraft: lazyAuxBuffers, a pass that got needed after setupRenderConfiguration still has its
+            // placeholder target, skip it for this frame, the next setupRenderConfiguration gives it its real size
+            if (!DATA_HOLDER.vrRenderer.isPassTargetAllocated(renderpass)) {
+                continue;
+            }
             DATA_HOLDER.currentPass = renderpass;
 
             if (DATA_HOLDER.vrSettings.displayMirrorUseScreenshotCamera && DATA_HOLDER.cameraTracker.isVisible()) {
@@ -190,6 +204,9 @@ public class VRPassHelper {
                 {
                     continue;
                 }
+            }
+            if (!eyesAvailable && (renderpass == RenderPass.LEFT || renderpass == RenderPass.RIGHT)) {
+                continue;
             }
 
             switch (renderpass) {
@@ -234,11 +251,25 @@ public class VRPassHelper {
             }
 
             DATA_HOLDER.isFirstPass = false;
+
+            if (lateSubmit && renderpass == RenderPass.RIGHT) {
+                submitFrame();
+                submitted = true;
+            }
         }
         // now we are done with rendering
         Profiler.get().pop();
 
         DATA_HOLDER.vrPlayer.postRender(deltaTracker.getGameTimeDeltaPartialTick(true));
+        if (!submitted) {
+            submitFrame();
+        }
+    }
+
+    /**
+     * claudecraft: the original end-of-frame submit, moved here unchanged so both xrLateFrameWait modes share it
+     */
+    private static void submitFrame() {
         Profiler.get().push("Display/Reproject");
 
         try {
@@ -247,6 +278,6 @@ public class VRPassHelper {
             VRSettings.LOGGER.error("Vivecraft: error ending frame: {}", exception.error.getString());
         }
         Profiler.get().pop();
-        RenderHelper.checkGLError("post submit");
+        RenderHelper.checkGLErrorFrame("post submit");
     }
 }

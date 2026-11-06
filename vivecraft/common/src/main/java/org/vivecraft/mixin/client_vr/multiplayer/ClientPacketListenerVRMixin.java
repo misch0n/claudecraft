@@ -20,6 +20,7 @@ import org.vivecraft.client.network.ClientNetworking;
 import org.vivecraft.client_vr.ClientDataHolderVR;
 import org.vivecraft.client_vr.VRState;
 import org.vivecraft.client_vr.gameplay.screenhandlers.GuiHandler;
+import org.vivecraft.client_vr.gameplay.trackers.Tracker;
 import org.vivecraft.client_vr.provider.ControllerType;
 import org.vivecraft.client_vr.settings.VRSettings;
 
@@ -47,6 +48,7 @@ public abstract class ClientPacketListenerVRMixin extends ClientCommonPacketList
 
     @Inject(method = "handleLogin", at = @At("TAIL"))
     private void vivecraft$resetOnLogin(CallbackInfo ci) {
+        org.vivecraft.client_vr.perf.PerfProbe.markJoin();
         // clear old data
         ClientNetworking.resetServerSettings();
 
@@ -59,10 +61,20 @@ public abstract class ClientPacketListenerVRMixin extends ClientCommonPacketList
             ClientDataHolderVR.getInstance().vrPlayer.teleportWarning = true;
             ClientDataHolderVR.getInstance().vrPlayer.vrSwitchWarning = false;
         }
+
+        // claudecraft: free the menu world while in a world (freeMenuWorldInGame)
+        if (ClientDataHolderVR.getInstance().menuWorldRenderer != null &&
+            ClientDataHolderVR.getInstance().vrSettings.freeMenuWorldInGame)
+        {
+            ClientDataHolderVR.getInstance().menuWorldRenderer.freeInGame();
+        }
     }
 
     @Inject(method = "handleRespawn", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;setLevel(Lnet/minecraft/client/multiplayer/ClientLevel;Lnet/minecraft/client/gui/screens/ReceivingLevelScreen$Reason;)V", shift = At.Shift.AFTER))
     private void vivecraft$resetOnDimensionChange(CallbackInfo ci) {
+        // claudecraft: don't keep entities of the old dimension's level (clearTrackerRefs)
+        vivecraft$clearTrackerRefs();
+
         // clear old data
         ClientNetworking.resetServerSettings();
 
@@ -79,10 +91,22 @@ public abstract class ClientPacketListenerVRMixin extends ClientCommonPacketList
 
     @Inject(method = "close", at = @At("TAIL"))
     private void vivecraft$cleanup(CallbackInfo ci) {
+        org.vivecraft.client_vr.perf.PerfProbe.milestone("leave");
         ClientNetworking.resetServerSettings();
         ClientNetworking.DISPLAYED_CHAT_MESSAGE = false;
         ClientNetworking.DISPLAYED_CHAT_WARNING = false;
         ClientNetworking.NEEDS_RESET = true;
+        // claudecraft: don't keep entities of the old level until the next join (clearTrackerRefs)
+        vivecraft$clearTrackerRefs();
+    }
+
+    @Unique
+    private void vivecraft$clearTrackerRefs() {
+        if (ClientDataHolderVR.getInstance().vrSettings.clearTrackerRefs) {
+            for (Tracker tracker : ClientDataHolderVR.getInstance().getTrackers()) {
+                tracker.clearLevelReferences();
+            }
+        }
     }
 
     @Inject(method = "sendChat", at = @At("TAIL"))

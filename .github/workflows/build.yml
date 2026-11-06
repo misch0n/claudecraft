@@ -4,13 +4,13 @@ name: build
 # Artifacts: the jar, the APK in two variants (replace / side-by-side), and reports.
 # Pushing a tag `mihail.N` also publishes them as a GitHub release for sideloading.
 
-# Builds run only when something that goes into the jar or the APK changes. Docs (*.md, perf/), device
-# scripts (tools/) and other branches (explore/**, research/**, archive/**, ...) never start a build.
-# Tag pushes always build (GitHub does not apply path filters to tags). Anything else: run it by hand
-# (Actions -> build -> Run workflow) or include "[skip ci]" in a commit message to skip one push.
+# Builds start only from pushes to main that change something that goes into the jar or the APK, and from
+# `mihail.*` tags (GitHub does not apply path filters to tags). Docs (*.md, perf/), device scripts (tools/)
+# and every other branch (release/**, explore/**, task branches) never start a build: run one by hand on
+# any branch with Actions -> build -> Run workflow (workflow_dispatch). "[skip ci]" skips one push.
 on:
   push:
-    branches: [main, 'integration/**', 'perf/**']
+    branches: [main]
     tags: ['mihail.*']
     paths:
       - 'vivecraft/**'

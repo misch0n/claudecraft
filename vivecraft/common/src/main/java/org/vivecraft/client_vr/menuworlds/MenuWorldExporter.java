@@ -32,6 +32,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.dimension.BuiltinDimensionTypes;
 import net.minecraft.world.level.dimension.DimensionType;
 import org.vivecraft.client.Xplat;
+import org.vivecraft.client_vr.ClientDataHolderVR;
 import org.vivecraft.client_vr.settings.VRSettings;
 
 import java.io.*;
@@ -39,6 +40,7 @@ import java.util.*;
 import java.util.zip.DataFormatException;
 import java.util.zip.Deflater;
 import java.util.zip.Inflater;
+import java.util.zip.InflaterInputStream;
 
 public class MenuWorldExporter {
     public static final int VERSION = 5;
@@ -173,6 +175,12 @@ public class MenuWorldExporter {
             throw new DataFormatException("Unsupported menu world version: " + header.version);
         }
 
+        // claudecraft: menuWorldStreamLoad, inflate while parsing instead of holding the inflated data twice
+        if (ClientDataHolderVR.getInstance().vrSettings.menuWorldStreamLoad) {
+            return inflateAndReadWorld(header,
+                new ByteArrayInputStream(data, Header.SIZE, data.length - Header.SIZE));
+        }
+
         Inflater inflater = new Inflater();
         inflater.setInput(data, Header.SIZE, data.length - Header.SIZE);
         ByteArrayOutputStream output = new ByteArrayOutputStream(header.uncompressedSize);
@@ -183,6 +191,26 @@ public class MenuWorldExporter {
         }
 
         DataInputStream dis = new DataInputStream(new ByteArrayInputStream(output.toByteArray()));
+        return readWorld(header, dis);
+    }
+
+    /**
+     * claudecraft: menuWorldStreamLoad. inflates {@code compressed} while parsing it, so neither the compressed nor
+     * the inflated file is ever held as a whole
+     */
+    private static FakeBlockAccess inflateAndReadWorld(Header header, InputStream compressed) throws IOException {
+        Inflater inflater = new Inflater();
+        try {
+            DataInputStream dis = new DataInputStream(
+                new BufferedInputStream(new InflaterInputStream(compressed, inflater, 65536), 65536));
+            return readWorld(header, dis);
+        } finally {
+            inflater.end();
+        }
+    }
+
+    // claudecraft: the parser of loadWorld(byte[]), split out unchanged so the streaming path can use it
+    private static FakeBlockAccess readWorld(Header header, DataInputStream dis) throws IOException {
         int xSize = dis.readInt();
         int ySize = dis.readInt();
         int zSize = dis.readInt();
@@ -339,6 +367,17 @@ public class MenuWorldExporter {
     }
 
     public static FakeBlockAccess loadWorld(InputStream is) throws IOException, DataFormatException {
+        // claudecraft: menuWorldStreamLoad, read the header and inflate straight from the file, without
+        // first copying the whole file into byte arrays
+        if (ClientDataHolderVR.getInstance().vrSettings.menuWorldStreamLoad) {
+            Header header = new Header();
+            header.read(new DataInputStream(is));
+            if (header.version > VERSION || header.version < MIN_VERSION) {
+                throw new DataFormatException("Unsupported menu world version: " + header.version);
+            }
+            return inflateAndReadWorld(header, is);
+        }
+
         ByteArrayOutputStream data = new ByteArrayOutputStream();
         byte[] buffer = new byte[1048576];
         int count;

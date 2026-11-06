@@ -112,9 +112,11 @@ The Unity C# (QCXR-XR-Wrapper) is compiled to native code inside the APK, so we 
 2. **Log the config.** On VR init, log one line prefixed `[VCPERF]` with the build tag and every perf
    toggle's value. The launcher logs its effective JVM arguments and properties into `latestlog.txt`. Any
    log must identify what was tested.
-3. **Build tag:** set `mod_version` in `vivecraft/gradle.properties` to `1.2.5-mihail.N` and bump N for
-   every build deployed to the headset. `mihail.0` is the unmodified release code. Tag the commit
-   `mihail.N` to publish the jar and APKs as a GitHub release.
+3. **Build tag:** set `mod_version` in `vivecraft/gradle.properties` to `<vivecraft>-mihail.N` (for example
+   `1.2.5-mihail.1`, `1.3.15-mihail.4`) and bump N for every build deployed to the headset; N counts up
+   across both Vivecraft lines, so the next build is `mihail.5`. `mihail.0` is unmodified upstream code. Tag
+   the commit `mihail.N` to publish the jar and APKs as a GitHub release (this session's git proxy refuses
+   tag pushes; push the tag from the Mac).
 4. **Minimal, rebase-friendly diffs.** Prefer Mixins and small hooks over rewrites. Do not reformat files.
    Keep upstream rebases cheap.
 5. **No new dependencies.**
@@ -122,19 +124,25 @@ The Unity C# (QCXR-XR-Wrapper) is compiled to native code inside the APK, so we 
    from the measurement protocol below. "Builds" and "runs" are not results.
 7. **The human wears the headset.** Before each test session, write a short numbered test script for the
    user (what to do, for how long). After it, pull data and analyse it yourself.
-8. **Small branches:** one branch per task (`perf/<task>`), merged into `main` once measured.
-   Headset test builds come from an `integration/<tag>` branch that merges the task branches.
-   Research and exploration go on `explore/<topic>` branches, which never start CI.
+8. **Branches.** Only three kinds live on the remote:
+   - `main`: the latest code **known to work on the Quest** (now `1.2.5-mihail.1`, Vivecraft 1.2.5). It
+     moves forward only to a build that worked on the headset.
+   - `release/mihail.N`: one branch per build deployed to the headset, kept as the history of what we tried,
+     never rewritten. `release/mihail.1` is the 1.2.5 line; `release/mihail.2`–`4` are on the Vivecraft
+     1.3.15 base (mihail.4 shows a black screen after Minecraft starts, see `perf/TEST-BLACKSCREEN.md`).
+   - `explore/notes`: research and exploration write-ups, one directory per topic (no code, never built).
+   Work happens on short-lived task branches (`perf/<task>`), merged into the next `release/mihail.N` and
+   deleted once that release exists. A release that works on the headset is merged into `main`.
 9. **Privacy:** `logcat` contains the Minecraft access token (Pojlib prints the launch arguments). Never
    commit raw logs, and redact `--accessToken` in anything that leaves the machine.
 
 ## Build
 
 - **This cloud container cannot reach** Fabric, Mojang, Modrinth, jitpack or the Android SDK hosts. All
-  builds run on **GitHub Actions** (`.github/workflows/build.yml`) on pushes to `main`, `perf/**` or
-  `integration/**` that change `vivecraft/`, `immersivemc/`, `pojlib/`, `apk/` or the workflow itself
-  (Markdown files excluded), and on every `mihail.*` tag. Docs, `perf/` and `tools/` changes don't build;
-  start a run by hand (workflow_dispatch) when needed. Watch runs with the GitHub tools.
+  builds run on **GitHub Actions** (`.github/workflows/build.yml`): automatically on pushes to `main` that
+  change `vivecraft/`, `immersivemc/`, `pojlib/`, `apk/` or the workflow itself (Markdown files excluded) and
+  on every `mihail.*` tag; any other branch (a `release/mihail.N`, a task branch) builds only when asked
+  (Actions → build → Run workflow, `workflow_dispatch`, on that branch). Watch runs with the GitHub tools.
 - **Jar:** with network, `cd vivecraft && ./gradlew :fabric:build` (JDK **21**) →
   `vivecraft/fabric/build/libs/vivecraft-1.21.5-<mod_version>-fabric.jar`.
 - **APK:** `apk/build-apk.sh` patches the released QuestCraft APK:

@@ -27,6 +27,12 @@ public abstract class Tracker {
 
     public void idleTick(@Nullable LocalPlayer player) {}
 
+    /**
+     * claudecraft: clearTrackerRefs. drops references to entities or other level objects, called on disconnect
+     * and dimension change, so the old level isn't kept alive by a tracker
+     */
+    public void clearLevelReferences() {}
+
     public EntryPoint getEntryPoint() {
         return EntryPoint.LIVING_UPDATE;
     }

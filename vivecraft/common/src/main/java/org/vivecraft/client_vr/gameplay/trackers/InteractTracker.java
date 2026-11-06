@@ -118,6 +118,17 @@ public class InteractTracker extends Tracker {
     }
 
     @Override
+    public void clearLevelReferences() {
+        // claudecraft: clearTrackerRefs, only the references, reset() also touches the VR input actions
+        for (int c = 0; c < 2; c++) {
+            this.inBlockPos[c] = null;
+            this.inBlockHit[c] = null;
+            this.inEntity[c] = null;
+            this.inEntityHit[c] = null;
+        }
+    }
+
+    @Override
     public void doProcess(LocalPlayer player) {
         if (this.rightClickable == null) {
             // compile a list of blocks that explicitly declare OnBlockActivated (right click)
