@@ -2,16 +2,16 @@ name: build
 
 # Builds our Vivecraft jar and a patched QuestCraft APK that bundles it.
 # Artifacts: the jar, the APK in two variants (replace / side-by-side), and reports.
-# Pushing a tag `mihail.N` also publishes them as a GitHub release for sideloading.
+# Pushing a tag `claudecraft-N` also publishes them as a GitHub release for sideloading.
 
 # Builds start only from pushes to main that change something that goes into the jar or the APK, and from
-# `mihail.*` tags (GitHub does not apply path filters to tags). Docs (*.md, perf/), device scripts (tools/)
+# `claudecraft-*` tags (GitHub does not apply path filters to tags). Docs (*.md, perf/), device scripts (tools/)
 # and every other branch (release/**, explore/**, task branches) never start a build: run one by hand on
 # any branch with Actions -> build -> Run workflow (workflow_dispatch). "[skip ci]" skips one push.
 on:
   push:
     branches: [main]
-    tags: ['mihail.*']
+    tags: ['claudecraft-*']
     paths:
       - 'vivecraft/**'
       - 'immersivemc/**'

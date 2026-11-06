@@ -66,7 +66,7 @@ is standing context and rules.
 | `vivecraft/` | QuestCraftPlusPlus/VivecraftMod @ `6d9b96af`, which the release `1.21.5-1.2.5-OpenXR` was most likely built from (CI compares it with the release jar). Imported as a git subtree (`--squash`); our changes are normal commits. |
 | `pojlib/` | QuestCraftPlusPlus/Pojlib @ `c6566d5` (`QuestCraft-6.0.0`), vendored without binaries. The 6.0.0 APK was built from an older commit (≈`092c27e`, 2025-05-30); the one later change to a class we replace is reverted (see `pojlib/IMPORTED.md`). Not built as a whole. |
 | `apk/` | APK pipeline: `build-apk.sh`, `patched-sources.txt` (the launcher classes we change), `rename_package.py`, `compare_jars.py`, and the debug signing key |
-| `.github/workflows/build.yml` | CI. Builds the jar and the APKs; a `mihail.N` tag publishes a GitHub release |
+| `.github/workflows/build.yml` | CI. Builds the jar and the APKs; a `claudecraft-N` tag publishes a GitHub release |
 | `tools/` | Device scripts (adb), run on the user's Mac |
 | `perf/` | `FINDINGS.md` (audit), `RESULTS.md` (measurements), `runs/` (raw data, git-ignored) |
 
@@ -112,11 +112,16 @@ The Unity C# (QCXR-XR-Wrapper) is compiled to native code inside the APK, so we 
 2. **Log the config.** On VR init, log one line prefixed `[VCPERF]` with the build tag and every perf
    toggle's value. The launcher logs its effective JVM arguments and properties into `latestlog.txt`. Any
    log must identify what was tested.
-3. **Build tag:** set `mod_version` in `vivecraft/gradle.properties` to `<vivecraft>-mihail.N` (for example
-   `1.2.5-mihail.1`, `1.3.15-mihail.4`) and bump N for every build deployed to the headset; N counts up
-   across both Vivecraft lines, so the next build is `mihail.5`. `mihail.0` is unmodified upstream code. Tag
-   the commit `mihail.N` to publish the jar and APKs as a GitHub release (this session's git proxy refuses
-   tag pushes; push the tag from the Mac).
+3. **Releases are named `claudecraft-N`.** N is one counter for every build deployed to the headset,
+   across both Vivecraft lines; the next one is `claudecraft-5`. For each release:
+   - set `mod_version` in `vivecraft/gradle.properties` to `<vivecraft>-claudecraft-N` (for example
+     `1.3.15-claudecraft-5`);
+   - create the branch `release/claudecraft-N`;
+   - tag the commit `claudecraft-N` to publish the jar and APKs as a GitHub release (this session's git
+     proxy refuses tag pushes; push the tag from the Mac).
+   Releases 1–4 were built as `mihail.N`, and their jars still carry that `mod_version` (`1.2.5-mihail.1`,
+   `1.3.15-mihail.2`…`4`); `claudecraft-N` and `mihail.N` are the same build. `mihail.0` / `claudecraft-0`
+   is unmodified upstream code.
 4. **Minimal, rebase-friendly diffs.** Prefer Mixins and small hooks over rewrites. Do not reformat files.
    Keep upstream rebases cheap.
 5. **No new dependencies.**
@@ -125,13 +130,14 @@ The Unity C# (QCXR-XR-Wrapper) is compiled to native code inside the APK, so we 
 7. **The human wears the headset.** Before each test session, write a short numbered test script for the
    user (what to do, for how long). After it, pull data and analyse it yourself.
 8. **Branches.** Only three kinds live on the remote:
-   - `main`: the latest code **known to work on the Quest** (now `1.2.5-mihail.1`, Vivecraft 1.2.5). It
-     moves forward only to a build that worked on the headset.
-   - `release/mihail.N`: one branch per build deployed to the headset, kept as the history of what we tried,
-     never rewritten. `release/mihail.1` is the 1.2.5 line; `release/mihail.2`–`4` are on the Vivecraft
-     1.3.15 base (mihail.4 shows a black screen after Minecraft starts, see `perf/TEST-BLACKSCREEN.md`).
+   - `main`: the latest code **known to work on the Quest** (now `claudecraft-1`: Vivecraft 1.2.5, jar
+     version `1.2.5-mihail.1`). It moves forward only to a build that worked on the headset.
+   - `release/claudecraft-N`: one branch per build deployed to the headset, kept as the history of what we
+     tried, never rewritten. `release/claudecraft-1` is the 1.2.5 line; `release/claudecraft-2`–`4` are on
+     the Vivecraft 1.3.15 base (claudecraft-4 shows a black screen after Minecraft starts, see
+     `perf/TEST-BLACKSCREEN.md`).
    - `explore/notes`: research and exploration write-ups, one directory per topic (no code, never built).
-   Work happens on short-lived task branches (`perf/<task>`), merged into the next `release/mihail.N` and
+   Work happens on short-lived task branches (`perf/<task>`), merged into the next `release/claudecraft-N` and
    deleted once that release exists. A release that works on the headset is merged into `main`.
 9. **Privacy:** `logcat` contains the Minecraft access token (Pojlib prints the launch arguments). Never
    commit raw logs, and redact `--accessToken` in anything that leaves the machine.
@@ -141,7 +147,7 @@ The Unity C# (QCXR-XR-Wrapper) is compiled to native code inside the APK, so we 
 - **This cloud container cannot reach** Fabric, Mojang, Modrinth, jitpack or the Android SDK hosts. All
   builds run on **GitHub Actions** (`.github/workflows/build.yml`): automatically on pushes to `main` that
   change `vivecraft/`, `immersivemc/`, `pojlib/`, `apk/` or the workflow itself (Markdown files excluded) and
-  on every `mihail.*` tag; any other branch (a `release/mihail.N`, a task branch) builds only when asked
+  on every `claudecraft-*` tag; any other branch (a `release/claudecraft-N`, a task branch) builds only when asked
   (Actions → build → Run workflow, `workflow_dispatch`, on that branch). Watch runs with the GitHub tools.
 - **Jar:** with network, `cd vivecraft && ./gradlew :fabric:build` (JDK **21**) →
   `vivecraft/fabric/build/libs/vivecraft-1.21.5-<mod_version>-fabric.jar`.
@@ -156,7 +162,7 @@ The Unity C# (QCXR-XR-Wrapper) is compiled to native code inside the APK, so we 
     which **deletes its data folder**; back it up.
   - `side` uses package `com.qcxr.qcxr.claudecraft` and installs next to the official app with its own
     data folder.
-- **Publishing:** a tag `mihail.N` publishes both APKs and the jar as a GitHub release.
+- **Publishing:** a tag `claudecraft-N` publishes both APKs and the jar as a GitHub release.
 
 ## Device loop (scripts live in `tools/`, run on the user's Mac with adb)
 

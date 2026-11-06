@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Patch the released QuestCraft APK with our Pojlib changes and our Vivecraft jar, then sign it.
 #
-#   apk/build-apk.sh --apk questcraft.apk --jar vivecraft-...-fabric.jar --variant replace|side --out DIR [--tag mihail.N]
+#   apk/build-apk.sh --apk questcraft.apk --jar vivecraft-...-fabric.jar --variant replace|side --out DIR [--tag <mod_version>]
 #
 # We cannot rebuild QuestCraft from source (the Unity launcher needs the Unity Editor), so we take the
 # released APK and replace only the launcher classes listed in apk/patched-sources.txt.
